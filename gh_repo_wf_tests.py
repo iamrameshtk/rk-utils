@@ -3,6 +3,8 @@ from github import Github
 import json
 import os
 import pandas as pd
+import zipfile
+import io
 
 # Load GitHub token from environment variable
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
@@ -43,7 +45,12 @@ def get_workflow_logs(owner, repo, run_id):
     response = requests.get(url, headers=headers)
     
     if response.status_code == 200:
-        return response.text  # Returns the raw log content
+        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+            logs = ""
+            for filename in z.namelist():
+                with z.open(filename) as log_file:
+                    logs += log_file.read().decode("utf-8") + "\n"
+            return logs
     else:
         print(f"Failed to fetch logs for run {run_id} in {repo}: {response.status_code}")
     return None
@@ -52,10 +59,12 @@ def parse_test_results(log_content, scan_test_name):
     success_count = 0
     failure_count = 0
     capturing = False
+    stage_found = False
     
     for line in log_content.split("\n"):
-        if scan_test_name and scan_test_name in line:
+        if scan_test_name in line:
             capturing = True  # Start capturing logs for the specific scan/test stage
+            stage_found = True
         
         if capturing:
             if "✔" in line or "PASSED" in line:
@@ -63,6 +72,8 @@ def parse_test_results(log_content, scan_test_name):
             elif "✘" in line or "FAILED" in line:
                 failure_count += 1
     
+    if not stage_found:
+        return "Skipped", "Skipped"  # Indicate that the stage was not found in logs
     return success_count, failure_count
 
 def main():
@@ -86,6 +97,17 @@ def main():
                         "Conclusion": latest_run['conclusion'],
                         "Total Success": success,
                         "Total Failed": failure
+                    })
+                else:
+                    results.append({
+                        "Repository": repo,
+                        "Workflow": workflow,
+                        "Run ID": latest_run['id'],
+                        "Scan/Test Name": scan_test_name,
+                        "Status": latest_run['status'],
+                        "Conclusion": latest_run['conclusion'],
+                        "Total Success": "No Logs",
+                        "Total Failed": "No Logs"
                     })
     
     # Save results to an Excel file
