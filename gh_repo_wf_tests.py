@@ -124,9 +124,20 @@ def parse_checkov_logs(logs):
     if not logs:
         return {"status": "Not Run", "passed": 0, "failed": 0, "skipped": 0}
     
-    pattern = r"terraform scan results:[\s\S]*?Passed checks: (\d+), Failed checks: (\d+), Skipped checks: (\d+)"
+    # First try the exact pattern mentioned in requirements
+    pattern = r"terraform scan results:\s*\n\s*Passed checks: (\d+), Failed checks: (\d+), Skipped checks: (\d+)"
     match = re.search(pattern, logs)
     
+    # If not found, try a more general pattern
+    if not match:
+        pattern = r"Passed checks: (\d+), Failed checks: (\d+), Skipped checks: (\d+)"
+        match = re.search(pattern, logs)
+    
+    # If still not found, try another common format
+    if not match:
+        pattern = r"PASSED: (\d+)\s+FAILED: (\d+)\s+SKIPPED: (\d+)"
+        match = re.search(pattern, logs)
+        
     if match:
         return {
             "status": "Success" if int(match.group(2)) == 0 else "Failed",
@@ -134,6 +145,11 @@ def parse_checkov_logs(logs):
             "failed": int(match.group(2)),
             "skipped": int(match.group(3))
         }
+    
+    # Log sections of the logs for debugging
+    if logs:
+        print("Warning: Unable to parse Checkov logs. Here's a sample:")
+        print(logs[:500] + "..." if len(logs) > 500 else logs)
     
     return {"status": "Log parsing failed", "passed": 0, "failed": 0, "skipped": 0}
 
@@ -142,15 +158,31 @@ def parse_terraform_logs(logs):
     if not logs:
         return {"status": "Not Run", "passed": 0, "failed": 0}
     
+    # First try the exact pattern mentioned in requirements
     pattern = r"Success! (\d+) passed, (\d+) failed"
     match = re.search(pattern, logs)
     
+    # If not found, try alternative formats
+    if not match:
+        pattern = r"(\d+) passing, (\d+) failing"
+        match = re.search(pattern, logs)
+    
+    if not match:
+        # Look for test output in the terraform test format
+        pattern = r"Tests: (\d+) passed, (\d+) failed"
+        match = re.search(pattern, logs)
+        
     if match:
         return {
             "status": "Success" if int(match.group(2)) == 0 else "Failed",
             "passed": int(match.group(1)),
             "failed": int(match.group(2))
         }
+    
+    # Log sections of the logs for debugging
+    if logs:
+        print("Warning: Unable to parse Terraform logs. Here's a sample:")
+        print(logs[:500] + "..." if len(logs) > 500 else logs)
     
     return {"status": "Log parsing failed", "passed": 0, "failed": 0}
 
@@ -159,9 +191,20 @@ def parse_inspec_logs(logs):
     if not logs:
         return {"status": "Not Run", "passed": 0, "failed": 0, "skipped": 0}
     
+    # First try the exact pattern mentioned in requirements
     pattern = r"Test Summary: (\d+) successful, (\d+) failures, (\d+) skipped"
     match = re.search(pattern, logs)
     
+    # If not found, look for profile summary
+    if not match:
+        pattern = r"Profile Summary: (\d+) successful Control, (\d+) failures, (\d+) controls skipped"
+        match = re.search(pattern, logs)
+    
+    # Try another common inspec format
+    if not match:
+        pattern = r"(\d+) examples, (\d+) failures, (\d+) skipped"
+        match = re.search(pattern, logs)
+        
     if match:
         return {
             "status": "Success" if int(match.group(2)) == 0 else "Failed",
@@ -169,6 +212,25 @@ def parse_inspec_logs(logs):
             "failed": int(match.group(2)),
             "skipped": int(match.group(3))
         }
+    
+    # Look for multi-line format
+    if not match and logs:
+        successful_match = re.search(r"(\d+) successful", logs)
+        failures_match = re.search(r"(\d+) failures", logs)
+        skipped_match = re.search(r"(\d+) skipped", logs)
+        
+        if successful_match and failures_match and skipped_match:
+            return {
+                "status": "Success" if int(failures_match.group(1)) == 0 else "Failed",
+                "passed": int(successful_match.group(1)),
+                "failed": int(failures_match.group(1)),
+                "skipped": int(skipped_match.group(1))
+            }
+            
+    # Log sections of the logs for debugging
+    if logs:
+        print("Warning: Unable to parse Inspec logs. Here's a sample:")
+        print(logs[:500] + "..." if len(logs) > 500 else logs)
     
     return {"status": "Log parsing failed", "passed": 0, "failed": 0, "skipped": 0}
 
@@ -181,8 +243,10 @@ def get_workflow_results(repo, headers):
         
         if not workflow_run:
             results[workflow_id] = {
+                "run_id": None,
                 "run_date": None,
                 "status": "No runs found",
+                "job_id": None,
                 "results": {"status": "Not Run", "passed": 0, "failed": 0, "skipped": 0}
             }
             continue
@@ -198,28 +262,41 @@ def get_workflow_results(repo, headers):
         
         if not target_job:
             results[workflow_id] = {
+                "run_id": run_id,
                 "run_date": workflow_run["created_at"],
                 "status": "Job not found",
+                "job_id": None,
                 "results": {"status": "Not Run", "passed": 0, "failed": 0, "skipped": 0}
             }
             continue
         
+        job_id = target_job["id"]
+        
         # Check if the job was skipped or not completed
         if target_job["conclusion"] != "success" and target_job["conclusion"] != "failure":
             results[workflow_id] = {
+                "run_id": run_id,
                 "run_date": workflow_run["created_at"],
                 "status": "Skipped" if target_job["conclusion"] == "skipped" else target_job["conclusion"],
+                "job_id": job_id,
                 "results": {"status": "Skipped", "passed": 0, "failed": 0, "skipped": 0}
             }
             continue
         
-        logs = get_job_logs(repo, target_job["id"], headers)
+        # Get and parse the logs
+        print(f"Fetching logs for {workflow_id} in {repo} (Run ID: {run_id}, Job ID: {job_id})")
+        logs = get_job_logs(repo, job_id, headers)
         parser_func = globals()[config["parser"]]
         
+        # Parse logs and extract test counts
+        test_results = parser_func(logs)
+        
         results[workflow_id] = {
+            "run_id": run_id,
             "run_date": workflow_run["created_at"],
             "status": target_job["conclusion"],
-            "results": parser_func(logs)
+            "job_id": job_id,
+            "results": test_results
         }
     
     return results
@@ -269,6 +346,8 @@ def generate_excel_report(all_results, output_file=None):
             row = {
                 "Repository": repo,
                 "Workflow": workflow_id,
+                "Run ID": workflow_data.get("run_id"),
+                "Job ID": workflow_data.get("job_id"),
                 "Run Date": workflow_data.get("run_date"),
                 "Workflow Status": workflow_data.get("status"),
                 "Job Name": WORKFLOWS[workflow_id]["job_name"],
@@ -276,7 +355,7 @@ def generate_excel_report(all_results, output_file=None):
                 "Test Status": workflow_data["results"]["status"],
                 "Passed": workflow_data["results"].get("passed", 0),
                 "Failed": workflow_data["results"].get("failed", 0),
-                "Skipped": workflow_data["results"].get("skipped", 0)
+                "Skipped": workflow_data["results"].get("skipped", 0) if "skipped" in workflow_data["results"] else 0
             }
             data.append(row)
     
@@ -296,9 +375,43 @@ def generate_excel_report(all_results, output_file=None):
         'border': 1
     })
     
+    number_format = workbook.add_format({'num_format': '0'})
+    date_format = workbook.add_format({'num_format': 'yyyy-mm-dd hh:mm:ss'})
+    
     # Apply formatting to header row
     for col_num, value in enumerate(df.columns.values):
         worksheet.write(0, col_num, value, header_format)
+    
+    # Apply number formatting to numeric columns
+    passed_col = df.columns.get_loc("Passed") + 1
+    failed_col = df.columns.get_loc("Failed") + 1
+    skipped_col = df.columns.get_loc("Skipped") + 1
+    run_id_col = df.columns.get_loc("Run ID") + 1
+    job_id_col = df.columns.get_loc("Job ID") + 1
+    date_col = df.columns.get_loc("Run Date") + 1
+    
+    for row_num in range(1, len(df) + 1):
+        worksheet.write_number(row_num, passed_col - 1, df.iloc[row_num-1]["Passed"], number_format)
+        worksheet.write_number(row_num, failed_col - 1, df.iloc[row_num-1]["Failed"], number_format)
+        worksheet.write_number(row_num, skipped_col - 1, df.iloc[row_num-1]["Skipped"], number_format)
+        
+        # Format IDs as numbers if they exist
+        if pd.notna(df.iloc[row_num-1]["Run ID"]):
+            worksheet.write_number(row_num, run_id_col - 1, df.iloc[row_num-1]["Run ID"], number_format)
+        if pd.notna(df.iloc[row_num-1]["Job ID"]):
+            worksheet.write_number(row_num, job_id_col - 1, df.iloc[row_num-1]["Job ID"], number_format)
+        
+        # Format date if it exists
+        if pd.notna(df.iloc[row_num-1]["Run Date"]):
+            try:
+                date_str = df.iloc[row_num-1]["Run Date"]
+                # Try to convert to datetime if it's a string
+                if isinstance(date_str, str):
+                    date_obj = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%SZ")
+                    worksheet.write_datetime(row_num, date_col - 1, date_obj, date_format)
+            except:
+                # If conversion fails, just write as is
+                worksheet.write(row_num, date_col - 1, df.iloc[row_num-1]["Run Date"])
     
     # Adjust columns width
     for i, col in enumerate(df.columns):
@@ -328,6 +441,21 @@ def generate_excel_report(all_results, output_file=None):
                                 'criteria': 'equal to',
                                 'value': '"Skipped"',
                                 'format': skip_format})
+    
+    # Add conditional formatting for test counts
+    # Highlight non-zero values in Failed column
+    worksheet.conditional_format(1, failed_col - 1, len(df) + 1, failed_col - 1,
+                               {'type': 'cell',
+                                'criteria': 'greater than',
+                                'value': 0,
+                                'format': fail_format})
+    
+    # Highlight passed counts
+    worksheet.conditional_format(1, passed_col - 1, len(df) + 1, passed_col - 1,
+                                {'type': 'cell',
+                                 'criteria': 'greater than',
+                                 'value': 0,
+                                 'format': success_format})
     
     # Write the Excel file
     writer.close()
