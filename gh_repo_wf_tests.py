@@ -316,38 +316,39 @@ def parse_terraform_logs(logs):
     return {"status": "Log parsing failed", "passed": 0, "failed": 0}
 
 def parse_inspec_logs(logs):
-    """Parse Chef Inspec logs to extract test counts."""
+    """
+    Parse Chef Inspec logs to extract test counts.
+    Specifically designed to handle the format:
+    Profile Summary: X successful Control, Y failures, Z controls skipped
+    Test Summary: X successful, Y failures, Z skipped
+    """
     if not logs:
         return {"status": "Not Run", "passed": 0, "failed": 0, "skipped": 0}
     
-    # Print first few characters for debugging
     print(f"Parsing InSpec logs (first 100 chars): {logs[:100]}...")
     
-    # First try the Test Summary exact pattern mentioned in requirements (case insensitive)
-    test_summary_pattern = r"Test Summary:\s*(\d+)\s+successful,\s*(\d+)\s+failures,\s*(\d+)\s+skipped"
-    test_match = re.search(test_summary_pattern, logs, re.IGNORECASE)
+    # Look for both Profile Summary and Test Summary patterns
+    # We'll prioritize Test Summary as it contains the detailed test counts
+    profile_pattern = r"Profile Summary:\s*(\d+)\s+successful\s+Control,\s*(\d+)\s+failures?,\s*(\d+)\s+controls\s+skipped"
+    test_pattern = r"Test Summary:\s*(\d+)\s+successful,\s*(\d+)\s+failures?,\s*(\d+)\s+skipped"
     
-    # Also look for Profile Summary pattern
-    profile_summary_pattern = r"Profile Summary:\s*(\d+)\s+successful\s+Control,\s*(\d+)\s+failures,\s*(\d+)\s+controls\s+skipped"
-    profile_match = re.search(profile_summary_pattern, logs, re.IGNORECASE)
+    profile_match = re.search(profile_pattern, logs, re.IGNORECASE)
+    test_match = re.search(test_pattern, logs, re.IGNORECASE)
     
-    # If both patterns are found, prefer the Test Summary as it typically has more detailed counts
-    if test_match and profile_match:
+    # Debug information
+    if profile_match:
+        print(f"Found Profile Summary match: {profile_match.groups()}")
+    if test_match:
+        print(f"Found Test Summary match: {test_match.groups()}")
+    
+    # Prefer Test Summary over Profile Summary as it contains detailed test counts
+    if test_match:
         return {
             "status": "Success" if int(test_match.group(2)) == 0 else "Failed",
             "passed": int(test_match.group(1)),
             "failed": int(test_match.group(2)),
             "skipped": int(test_match.group(3))
         }
-    # If only Test Summary is found
-    elif test_match:
-        return {
-            "status": "Success" if int(test_match.group(2)) == 0 else "Failed",
-            "passed": int(test_match.group(1)),
-            "failed": int(test_match.group(2)),
-            "skipped": int(test_match.group(3))
-        }
-    # If only Profile Summary is found
     elif profile_match:
         return {
             "status": "Success" if int(profile_match.group(2)) == 0 else "Failed",
@@ -356,119 +357,109 @@ def parse_inspec_logs(logs):
             "skipped": int(profile_match.group(3))
         }
     
-    # Try patterns with more flexible spacing and wording
-    if not test_match and not profile_match:
-        # More flexible patterns for Test Summary
-        test_patterns = [
-            r"[Tt]est\s+[Ss]ummary\s*:?\s*(\d+)\s+successful,?\s*(\d+)\s+failures?,?\s*(\d+)\s+skipped",
-            r"[Tt]est\s+[Ss]ummary\s*:?\s*(\d+)\s+successful,?\s*(\d+)\s+failed,?\s*(\d+)\s+skipped",
-            r"[Tt]ests?\s*:?\s*(\d+)\s+successful,?\s*(\d+)\s+failures?,?\s*(\d+)\s+skipped",
-            r"[Tt]ests?\s*:?\s*(\d+)\s+passed,?\s*(\d+)\s+failed,?\s*(\d+)\s+skipped"
-        ]
+    # If the specific patterns above didn't match, search for lines containing both patterns
+    inspec_lines = []
+    for line in logs.splitlines():
+        if "Profile Summary:" in line or "Test Summary:" in line:
+            inspec_lines.append(line.strip())
+    
+    if inspec_lines:
+        print(f"Found InSpec summary lines: {inspec_lines}")
         
-        for pattern in test_patterns:
-            match = re.search(pattern, logs, re.IGNORECASE)
+        # Process each line separately
+        profile_data = None
+        test_data = None
+        
+        for line in inspec_lines:
+            # Try Profile Summary pattern
+            match = re.search(r"Profile Summary:\s*(\d+)\s+successful\s+Control,\s*(\d+)\s+failures?,\s*(\d+)\s+controls\s+skipped", line)
             if match:
-                return {
+                profile_data = {
                     "status": "Success" if int(match.group(2)) == 0 else "Failed",
                     "passed": int(match.group(1)),
                     "failed": int(match.group(2)),
                     "skipped": int(match.group(3))
                 }
-    
-    # Try to find independent numbers for successful, failures, and skipped
-    if not test_match and not profile_match:
-        # Look for separate metrics across the entire log
-        successful_patterns = [
-            r"(\d+)\s+successful(?!\s+Control)",  # Match "successful" but not "successful Control"
-            r"(\d+)\s+passed",
-            r"(\d+)\s+successful\s+tests"
-        ]
-        
-        failures_patterns = [
-            r"(\d+)\s+failures",
-            r"(\d+)\s+failed(?!\s+to)",  # Match "failed" but not "failed to"
-            r"(\d+)\s+failing"
-        ]
-        
-        skipped_patterns = [
-            r"(\d+)\s+skipped(?!\s+controls)",  # Match "skipped" but not "skipped controls"
-            r"(\d+)\s+skipped\s+tests"
-        ]
-        
-        successful = 0
-        failures = 0
-        skipped = 0
-        
-        # Find all matches for each pattern and use the largest value
-        for pattern in successful_patterns:
-            matches = re.findall(pattern, logs, re.IGNORECASE)
-            if matches:
-                successful = max([int(m) for m in matches] + [successful])
-        
-        for pattern in failures_patterns:
-            matches = re.findall(pattern, logs, re.IGNORECASE)
-            if matches:
-                failures = max([int(m) for m in matches] + [failures])
-        
-        for pattern in skipped_patterns:
-            matches = re.findall(pattern, logs, re.IGNORECASE)
-            if matches:
-                skipped = max([int(m) for m in matches] + [skipped])
-        
-        if successful > 0 or failures > 0:  # Only return if we found at least something
-            return {
-                "status": "Success" if failures == 0 else "Failed",
-                "passed": successful,
-                "failed": failures,
-                "skipped": skipped
-            }
-    
-    # Look for specific lines containing summaries
-    summary_lines = []
-    for line in logs.splitlines():
-        if "summary" in line.lower() or "successful" in line.lower() or "failures" in line.lower():
-            summary_lines.append(line)
-    
-    # Try to parse each potential summary line
-    for line in summary_lines:
-        numbers = re.findall(r'\d+', line)
-        if len(numbers) >= 3:  # If we have at least three numbers, they might be our metrics
-            # Heuristic: If "fail" comes before "skip" in the line, then the order is likely pass, fail, skip
-            if "fail" in line.lower() and "skip" in line.lower() and line.lower().index("fail") < line.lower().index("skip"):
-                return {
-                    "status": "Success" if int(numbers[1]) == 0 else "Failed",
-                    "passed": int(numbers[0]),
-                    "failed": int(numbers[1]),
-                    "skipped": int(numbers[2])
+            
+            # Try Test Summary pattern
+            match = re.search(r"Test Summary:\s*(\d+)\s+successful,\s*(\d+)\s+failures?,\s*(\d+)\s+skipped", line)
+            if match:
+                test_data = {
+                    "status": "Success" if int(match.group(2)) == 0 else "Failed",
+                    "passed": int(match.group(1)),
+                    "failed": int(match.group(2)),
+                    "skipped": int(match.group(3))
                 }
-            # Otherwise, use standard ordering
-            return {
-                "status": "Success" if int(numbers[1]) == 0 else "Failed",
-                "passed": int(numbers[0]),
-                "failed": int(numbers[1]),
-                "skipped": int(numbers[2])
-            }
+        
+        # Prefer test data over profile data
+        if test_data:
+            print(f"Using test data: {test_data}")
+            return test_data
+        if profile_data:
+            print(f"Using profile data: {profile_data}")
+            return profile_data
     
-    # Log sections of the logs for debugging
+    # If still no match found, extract sections of the log containing "summary" for further analysis
+    summary_sections = []
+    in_summary_section = False
+    summary_lines = []
+    
+    for line in logs.splitlines():
+        # Start of a summary section
+        if "Summary" in line:
+            in_summary_section = True
+            summary_lines = [line]
+        # Add lines while in a summary section
+        elif in_summary_section:
+            if line.strip():  # Not empty line
+                summary_lines.append(line)
+            else:  # Empty line might end the section
+                if summary_lines:
+                    summary_sections.append("\n".join(summary_lines))
+                in_summary_section = False
+                summary_lines = []
+    
+    # Add the last section if there's one in progress
+    if summary_lines:
+        summary_sections.append("\n".join(summary_lines))
+    
+    if summary_sections:
+        print(f"Found {len(summary_sections)} summary sections")
+        for section in summary_sections:
+            # Look for numbers followed by relevant keywords
+            successful_match = re.search(r"(\d+)\s+successful", section)
+            failures_match = re.search(r"(\d+)\s+failures?", section)
+            skipped_match = re.search(r"(\d+)\s+skipped", section)
+            
+            if successful_match and failures_match and skipped_match:
+                return {
+                    "status": "Success" if int(failures_match.group(1)) == 0 else "Failed",
+                    "passed": int(successful_match.group(1)),
+                    "failed": int(failures_match.group(1)),
+                    "skipped": int(skipped_match.group(1))
+                }
+    
+    # Last resort: print parts of the log for debugging and return a failure status
     if logs:
-        print("Warning: Unable to parse Inspec logs. Here's a sample:")
-        print("First 200 chars:")
-        print(logs[:200])
-        print("\nLast 200 chars:")
-        print(logs[-200:])
+        print("Warning: Unable to parse Inspec logs. Here's relevant sections:")
         
-        # Extract lines containing keywords that might help diagnosis
-        keywords = ["summary", "successful", "failures", "skipped", "control"]
-        relevant_lines = []
-        for line in logs.splitlines():
-            if any(keyword in line.lower() for keyword in keywords):
-                relevant_lines.append(line)
+        # Extract chunks with keywords for debugging
+        keywords = ["profile summary", "test summary", "successful", "failures", "skipped"]
+        lines_with_keywords = []
         
-        if relevant_lines:
-            print("\nRelevant lines containing InSpec-related keywords:")
-            for line in relevant_lines[:10]:  # Print first 10 relevant lines
-                print(f"  {line}")
+        for i, line in enumerate(logs.splitlines()):
+            lower_line = line.lower()
+            if any(keyword in lower_line for keyword in keywords):
+                # Get context (3 lines before and after)
+                start = max(0, i - 3)
+                end = min(len(logs.splitlines()), i + 4)
+                context = logs.splitlines()[start:end]
+                lines_with_keywords.append(f"--- Context around line {i+1} ---")
+                lines_with_keywords.extend(context)
+                lines_with_keywords.append("")
+        
+        if lines_with_keywords:
+            print("\n".join(lines_with_keywords[:20]))  # Print up to 20 lines
     
     return {"status": "Log parsing failed", "passed": 0, "failed": 0, "skipped": 0}
 
