@@ -5,6 +5,7 @@ import os
 import pandas as pd
 import zipfile
 import io
+import re
 
 # Load GitHub token from environment variable
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
@@ -15,11 +16,11 @@ if not GITHUB_TOKEN:
 with open("repos.txt", "r") as file:
     REPOS = [line.strip() for line in file.readlines() if line.strip()]
 
-# Define the workflow names and their respective scan/test stages
+# Define the workflows and their corresponding jobs and stages
 WORKFLOWS = {
-    "core-checkov-action.yml": "Run Checkov action",  # Checkov scan stage
-    "core-terraform-module-integrations-tests.yml": "Run GCP Inspec",  # Chef Inspec stage
-    "terraform-module-unit-tests.yml": "Terraform Test",  # Terraform test stage
+    "core-checkov-action.yml": {"job": "checkov-action", "stage": "Run Checkov action"},
+    "core-terraform-module-integrations-tests.yml": {"job": "terraform-init-plan", "stage": "Run GCP Inspec"},
+    "terraform-module-unit-tests.yml": {"job": "terraform-init-plan", "stage": "Terraform test"},
 }
 
 github_client = Github(GITHUB_TOKEN)
@@ -55,25 +56,35 @@ def get_workflow_logs(owner, repo, run_id):
         print(f"Failed to fetch logs for run {run_id} in {repo}: {response.status_code}")
     return None
 
-def parse_test_results(log_content, scan_test_name):
+def parse_test_results(log_content, job_name, stage_name):
     success_count = 0
     failure_count = 0
     capturing = False
-    stage_found = False
     
     for line in log_content.split("\n"):
-        if scan_test_name in line:
-            capturing = True  # Start capturing logs for the specific scan/test stage
-            stage_found = True
+        if job_name in line and stage_name in line:
+            capturing = True  # Start capturing logs for the specific job-stage
         
         if capturing:
-            if "✔" in line or "PASSED" in line:
-                success_count += 1
-            elif "✘" in line or "FAILED" in line:
-                failure_count += 1
+            checkov_match = re.search(r"Passed checks: (\d+), Failed checks: (\d+)", line)
+            terraform_match = re.search(r"Success! (\d+) passed, (\d+) failed", line)
+            inspec_match = re.search(r"Test Summary: (\d+) successful, (\d+) failures", line)
+            
+            if checkov_match:
+                success_count = int(checkov_match.group(1))
+                failure_count = int(checkov_match.group(2))
+                break
+            
+            if terraform_match:
+                success_count = int(terraform_match.group(1))
+                failure_count = int(terraform_match.group(2))
+                break
+            
+            if inspec_match:
+                success_count = int(inspec_match.group(1))
+                failure_count = int(inspec_match.group(2))
+                break
     
-    if not stage_found:
-        return "Skipped", "Skipped"  # Indicate that the stage was not found in logs
     return success_count, failure_count
 
 def main():
@@ -82,17 +93,18 @@ def main():
     for repo_fullname in REPOS:
         owner, repo = repo_fullname.split("/")
         
-        for workflow, scan_test_name in WORKFLOWS.items():
+        for workflow, details in WORKFLOWS.items():
             latest_run = get_latest_workflow_run(owner, repo, workflow)
             if latest_run:
                 log_content = get_workflow_logs(owner, repo, latest_run['id'])
                 if log_content:
-                    success, failure = parse_test_results(log_content, scan_test_name)
+                    success, failure = parse_test_results(log_content, details['job'], details['stage'])
                     results.append({
                         "Repository": repo,
                         "Workflow": workflow,
                         "Run ID": latest_run['id'],
-                        "Scan/Test Name": scan_test_name,
+                        "Job Name": details['job'],
+                        "Stage Name": details['stage'],
                         "Status": latest_run['status'],
                         "Conclusion": latest_run['conclusion'],
                         "Total Success": success,
@@ -103,7 +115,8 @@ def main():
                         "Repository": repo,
                         "Workflow": workflow,
                         "Run ID": latest_run['id'],
-                        "Scan/Test Name": scan_test_name,
+                        "Job Name": details['job'],
+                        "Stage Name": details['stage'],
                         "Status": latest_run['status'],
                         "Conclusion": latest_run['conclusion'],
                         "Total Success": "No Logs",
