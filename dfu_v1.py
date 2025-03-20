@@ -13,6 +13,7 @@ import json
 import argparse
 import requests
 import logging
+import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 
@@ -32,7 +33,9 @@ class DataFusionPipelineDeployer:
                  instance_name: str,
                  repo_path: str,
                  env_folder: str,
-                 namespace: str = "default"):
+                 namespace: str = "default",
+                 debug: bool = False,
+                 timeout: int = 60):
         """
         Initialize the deployer with configuration.
         
@@ -43,6 +46,8 @@ class DataFusionPipelineDeployer:
             repo_path: Path to the local repository clone
             env_folder: Environment folder to use (env_dev, env_pre, env_prd)
             namespace: Data Fusion namespace (default: "default")
+            debug: Enable debug mode for verbose logging
+            timeout: Request timeout in seconds
         """
         self.project_id = project_id
         self.location = location
@@ -50,6 +55,14 @@ class DataFusionPipelineDeployer:
         self.repo_path = repo_path
         self.env_folder = env_folder
         self.namespace = namespace
+        self.debug = debug
+        self.timeout = timeout
+        
+        # Set debug logging if requested
+        if self.debug:
+            logger.setLevel(logging.DEBUG)
+            for handler in logger.handlers:
+                handler.setLevel(logging.DEBUG)
         
         # Get the OIDC token which is already available in the pipeline
         self.token = os.environ.get("OIDC_TOKEN")
@@ -59,6 +72,9 @@ class DataFusionPipelineDeployer:
         # Get Data Fusion API endpoint
         self.api_endpoint = self._get_data_fusion_endpoint()
         logger.info(f"Connected to Data Fusion API endpoint: {self.api_endpoint}")
+        
+        # Validate connection to the Data Fusion instance
+        self._validate_connection()
     
     def _get_data_fusion_endpoint(self) -> str:
         """
@@ -73,7 +89,7 @@ class DataFusionPipelineDeployer:
         }
         
         try:
-            response = requests.get(url, headers=headers)
+            response = requests.get(url, headers=headers, timeout=self.timeout)
             response.raise_for_status()
             
             instance_details = response.json()
@@ -89,6 +105,46 @@ class DataFusionPipelineDeployer:
                 logger.error(f"Failed to get Data Fusion instance details: {e.response.text}")
             else:
                 logger.error(f"Failed to get Data Fusion instance details: {str(e)}")
+            raise
+    
+    def _validate_connection(self) -> None:
+        """
+        Validate that we can connect to the Data Fusion instance.
+        Raises an exception if connection fails.
+        """
+        test_url = f"{self.api_endpoint}/v3/namespaces"
+        headers = {
+            "Authorization": f"Bearer {self.token}"
+        }
+        
+        try:
+            response = requests.get(test_url, headers=headers, timeout=self.timeout)
+            response.raise_for_status()
+            logger.info("Successfully validated connection to Data Fusion instance")
+            
+            if self.debug:
+                namespaces = response.json()
+                logger.debug(f"Available namespaces: {namespaces}")
+                
+            # Verify the specified namespace exists
+            namespace_url = f"{self.api_endpoint}/v3/namespaces/{self.namespace}"
+            ns_response = requests.get(namespace_url, headers=headers, timeout=self.timeout)
+            
+            if ns_response.status_code == 404:
+                logger.warning(f"Namespace '{self.namespace}' does not exist. Creating it...")
+                create_response = requests.put(namespace_url, headers=headers, timeout=self.timeout)
+                create_response.raise_for_status()
+                logger.info(f"Successfully created namespace '{self.namespace}'")
+            elif ns_response.status_code != 200:
+                logger.warning(f"Unexpected status when checking namespace: {ns_response.status_code}")
+            else:
+                logger.info(f"Namespace '{self.namespace}' exists")
+                
+        except requests.exceptions.RequestException as e:
+            if hasattr(e, 'response') and e.response is not None:
+                logger.error(f"Failed to validate connection to Data Fusion: {e.response.text}")
+            else:
+                logger.error(f"Failed to validate connection to Data Fusion: {str(e)}")
             raise
     
     def get_pipelines_from_repo(self) -> Dict[str, Dict[str, Any]]:
@@ -127,66 +183,26 @@ class DataFusionPipelineDeployer:
             
         return pipelines
     
-    def validate_pipeline_json(self, pipeline_name: str, pipeline_json: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    def check_pipeline_exists(self, pipeline_name: str) -> bool:
         """
-        Validate that the pipeline JSON has the required structure for Data Fusion.
+        Check if a pipeline already exists in Data Fusion.
         
         Args:
-            pipeline_name: Name of the pipeline
-            pipeline_json: Pipeline configuration as JSON
+            pipeline_name: Name of the pipeline to check
             
         Returns:
-            Tuple of (is_valid, error_message)
+            True if the pipeline exists, False otherwise
         """
-        # Basic validation of required fields in the pipeline JSON
-        # This may need adjustment based on your specific pipeline JSON structure
-        required_fields = ["name", "artifact", "config"]
+        url = f"{self.api_endpoint}/v3/namespaces/{self.namespace}/apps/{pipeline_name}"
+        headers = {
+            "Authorization": f"Bearer {self.token}"
+        }
         
-        for field in required_fields:
-            if field not in pipeline_json:
-                return False, f"Missing required field: {field}"
-        
-        return True, None
-    
-    def extract_jar_name(self, pipeline_json: Dict[str, Any], pipeline_name: str) -> str:
-        """
-        Extract JAR name from pipeline configuration or use a default based on pipeline name.
-        
-        Args:
-            pipeline_json: Pipeline configuration as JSON
-            pipeline_name: Name of the pipeline
-            
-        Returns:
-            JAR name for the X-Archive-Name header
-        """
-        # Try to extract artifact name from the pipeline JSON
-        # The exact path depends on your pipeline JSON structure
-        jar_name = None
-        
-        # Option 1: Try to get from artifact.name field if it exists
-        if "artifact" in pipeline_json and isinstance(pipeline_json["artifact"], dict) and "name" in pipeline_json["artifact"]:
-            jar_name = pipeline_json["artifact"]["name"]
-            if jar_name and jar_name.endswith(".jar"):
-                return jar_name
-        
-        # Option 2: Try to get from config.resources.programName field if it exists
-        if "config" in pipeline_json and isinstance(pipeline_json["config"], dict) and "resources" in pipeline_json["config"]:
-            resources = pipeline_json["config"]["resources"]
-            if isinstance(resources, dict) and "programName" in resources:
-                program_name = resources["programName"]
-                if program_name and program_name.endswith(".jar"):
-                    return program_name
-        
-        # Option 3: Fallback to a default naming convention based on pipeline name
-        # Using a commonly used JAR naming convention in Data Fusion
-        if pipeline_json.get("artifact", {}).get("version"):
-            version = pipeline_json["artifact"]["version"]
-            jar_name = f"{pipeline_name}-{version}.jar"
-        else:
-            jar_name = f"{pipeline_name}.jar"
-        
-        logger.info(f"Could not find JAR name in pipeline config, using default: {jar_name}")
-        return jar_name
+        try:
+            response = requests.get(url, headers=headers, timeout=self.timeout)
+            return response.status_code == 200
+        except requests.exceptions.RequestException:
+            return False
     
     def import_pipeline_to_data_fusion(self, pipeline_name: str, pipeline_json: Dict[str, Any]) -> bool:
         """
@@ -201,55 +217,55 @@ class DataFusionPipelineDeployer:
         """
         logger.info(f"Importing pipeline: {pipeline_name}")
         
-        # Validate pipeline JSON
-        is_valid, error_message = self.validate_pipeline_json(pipeline_name, pipeline_json)
-        if not is_valid:
-            logger.error(f"Invalid pipeline JSON for {pipeline_name}: {error_message}")
-            return False
+        # Check if we need to create or update
+        pipeline_exists = self.check_pipeline_exists(pipeline_name)
+        operation = "Updating" if pipeline_exists else "Creating"
+        logger.info(f"{operation} pipeline: {pipeline_name}")
+        
+        # Set the endpoint URL based on whether the pipeline exists
+        if pipeline_exists:
+            url = f"{self.api_endpoint}/v3/namespaces/{self.namespace}/apps/{pipeline_name}"
+            http_method = requests.put
+        else:
+            url = f"{self.api_endpoint}/v3/namespaces/{self.namespace}/apps"
+            http_method = requests.post
+        
+        # Set up the headers
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json"
+        }
+        
+        # For debugging
+        if self.debug:
+            logger.debug(f"Request URL: {url}")
+            logger.debug(f"Request method: {http_method.__name__}")
+            logger.debug(f"Request headers: {headers}")
+            logger.debug(f"Pipeline JSON excerpt: {str(pipeline_json)[:200]}...")
         
         try:
-            # Import API endpoint for Data Fusion
-            url = f"{self.api_endpoint}/v3/namespaces/{self.namespace}/apps"
+            # Send the request to import the pipeline
+            response = http_method(url, headers=headers, json=pipeline_json, timeout=self.timeout)
             
-            # Extract JAR name for the X-Archive-Name header
-            jar_name = self.extract_jar_name(pipeline_json, pipeline_name)
+            # For debugging
+            if self.debug:
+                logger.debug(f"Response status: {response.status_code}")
+                logger.debug(f"Response headers: {dict(response.headers)}")
+                logger.debug(f"Response content: {response.text[:500]}..." if response.text else "Empty response")
             
-            headers = {
-                "Authorization": f"Bearer {self.token}",
-                "Content-Type": "application/json",
-                "X-Archive-Name": jar_name  # Add the required X-Archive-Name header
-            }
-            
-            logger.info(f"Using X-Archive-Name: {jar_name}")
-            
-            # Check if pipeline already exists
-            check_url = f"{url}/{pipeline_name}"
-            check_response = requests.get(check_url, headers=headers)
-            
-            if check_response.status_code == 200:
-                # Pipeline exists, update it
-                logger.info(f"Pipeline {pipeline_name} already exists, updating")
-                response = requests.put(check_url, headers=headers, json=pipeline_json)
-            elif check_response.status_code == 404:
-                # Pipeline doesn't exist, create it
-                logger.info(f"Creating new pipeline: {pipeline_name}")
-                response = requests.post(url, headers=headers, json=pipeline_json)
-            else:
-                logger.error(f"Unexpected status when checking pipeline existence: {check_response.status_code} - {check_response.text}")
-                return False
-            
+            # Check if the request was successful
             if response.status_code in [200, 201, 202]:
-                logger.info(f"Successfully imported pipeline: {pipeline_name}")
+                logger.info(f"Successfully {operation.lower()}d pipeline: {pipeline_name}")
                 return True
             else:
-                logger.error(f"Failed to import pipeline {pipeline_name}: {response.status_code} - {response.text}")
+                logger.error(f"Failed to {operation.lower()} pipeline {pipeline_name}. Status: {response.status_code}, Response: {response.text}")
                 return False
                 
         except requests.exceptions.RequestException as e:
+            error_msg = str(e)
             if hasattr(e, 'response') and e.response is not None:
-                logger.error(f"Error importing pipeline {pipeline_name}: {e.response.text}")
-            else:
-                logger.error(f"Error importing pipeline {pipeline_name}: {str(e)}")
+                error_msg = f"{error_msg} - {e.response.text}"
+            logger.error(f"Error {operation.lower()}ing pipeline {pipeline_name}: {error_msg}")
             return False
     
     def deploy_pipelines(self, pipeline_names: Optional[List[str]] = None) -> Dict[str, bool]:
@@ -291,6 +307,9 @@ class DataFusionPipelineDeployer:
         for pipeline_name, pipeline_json in pipelines_to_deploy.items():
             try:
                 results[pipeline_name] = self.import_pipeline_to_data_fusion(pipeline_name, pipeline_json)
+                # Add a small delay between deployments to avoid rate limiting
+                if len(pipelines_to_deploy) > 1:
+                    time.sleep(1)
             except Exception as e:
                 logger.error(f"Unexpected error deploying pipeline {pipeline_name}: {str(e)}")
                 results[pipeline_name] = False
@@ -312,16 +331,10 @@ def main():
                         help='Environment folder to use')
     parser.add_argument('--namespace', default='default', help='Data Fusion namespace (default: "default")')
     parser.add_argument('--pipelines', nargs='+', help='Optional: Specific pipeline names to deploy (deploy all if not specified)')
-    parser.add_argument('--default-jar-name', help='Optional: Default JAR name to use if cannot be determined from pipeline')
-    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
+    parser.add_argument('--debug', action='store_true', help='Enable debug logging for detailed output')
+    parser.add_argument('--timeout', type=int, default=60, help='Request timeout in seconds (default: 60)')
     
     args = parser.parse_args()
-    
-    # Set debug logging if requested
-    if args.debug:
-        logger.setLevel(logging.DEBUG)
-        for handler in logger.handlers:
-            handler.setLevel(logging.DEBUG)
     
     try:
         deployer = DataFusionPipelineDeployer(
@@ -330,7 +343,9 @@ def main():
             instance_name=args.instance_name,
             repo_path=args.repo_path,
             env_folder=args.env_folder,
-            namespace=args.namespace
+            namespace=args.namespace,
+            debug=args.debug,
+            timeout=args.timeout
         )
         
         results = deployer.deploy_pipelines(args.pipelines)
