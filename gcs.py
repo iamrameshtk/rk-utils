@@ -2,11 +2,12 @@ import os
 import requests
 from google.cloud import storage
 from google.auth.transport.requests import AuthorizedSession
-from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
 
 def upload_to_gcs_put(bucket_name, source_file_path, destination_blob_name=None):
     """
     Uploads a file to a private Google Cloud Storage bucket using PUT method.
+    Uses auth token from environment variable.
     
     Args:
         bucket_name: Name of the GCS bucket
@@ -20,12 +21,16 @@ def upload_to_gcs_put(bucket_name, source_file_path, destination_blob_name=None)
     if destination_blob_name is None:
         destination_blob_name = os.path.basename(source_file_path)
     
-    # Get credentials and create authorized session
-    credentials = service_account.Credentials.from_service_account_file(
-        os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
-    )
-    scoped_credentials = credentials.with_scopes(['https://www.googleapis.com/auth/cloud-platform'])
-    authed_session = AuthorizedSession(scoped_credentials)
+    # Get auth token from environment variable
+    auth_token = os.environ.get('GCP_AUTH_TOKEN')
+    if not auth_token:
+        raise ValueError("GCP_AUTH_TOKEN environment variable is not set")
+    
+    # Create authorized session using the token
+    session = requests.Session()
+    session.headers.update({
+        'Authorization': f'Bearer {auth_token}'
+    })
     
     # Build the PUT request URL
     upload_url = f"https://storage.googleapis.com/upload/storage/v1/b/{bucket_name}/o?uploadType=media&name={destination_blob_name}"
@@ -47,7 +52,7 @@ def upload_to_gcs_put(bucket_name, source_file_path, destination_blob_name=None)
         '.jpeg': 'image/jpeg',
         '.xml': 'application/xml',
         '.html': 'text/html',
-        '.joblib': 'application/octet-stream'  # Added joblib file type
+        '.joblib': 'application/octet-stream'  # For joblib model files
     }
     if file_extension in content_types:
         content_type = content_types[file_extension]
@@ -56,14 +61,14 @@ def upload_to_gcs_put(bucket_name, source_file_path, destination_blob_name=None)
     headers = {
         'Content-Type': content_type
     }
-    response = authed_session.put(upload_url, data=file_content, headers=headers)
+    response = session.put(upload_url, data=file_content, headers=headers)
     
     # Check for success
     if response.status_code == 200:
         print(f"File {source_file_path} uploaded to gs://{bucket_name}/{destination_blob_name}")
         return f"gs://{bucket_name}/{destination_blob_name}"
     else:
-        print(f"Error uploading file: {response.text}")
+        print(f"Error uploading file: {response.status_code}, {response.text}")
         return None
 
 def main():
