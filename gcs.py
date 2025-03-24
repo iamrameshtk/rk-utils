@@ -1,8 +1,6 @@
 import os
 import requests
-from google.cloud import storage
-from google.auth.transport.requests import AuthorizedSession
-from google.oauth2.credentials import Credentials
+import glob
 
 def upload_to_gcs_put(bucket_name, source_file_path, destination_blob_name=None):
     """
@@ -71,23 +69,68 @@ def upload_to_gcs_put(bucket_name, source_file_path, destination_blob_name=None)
         print(f"Error uploading file: {response.status_code}, {response.text}")
         return None
 
+def upload_folder_to_gcs(bucket_name, folder_path="bucket_object"):
+    """
+    Uploads all files from a specific folder to GCS.
+    
+    Args:
+        bucket_name: Name of the GCS bucket
+        folder_path: Path to the folder containing files to upload (default: 'bucket_object')
+    
+    Returns:
+        List of successful uploads
+    """
+    # Make sure folder path exists
+    if not os.path.exists(folder_path):
+        print(f"Folder '{folder_path}' does not exist.")
+        return []
+    
+    # Normalize folder path (ensure it ends with separator)
+    folder_path = os.path.normpath(folder_path)
+    if not folder_path.endswith(os.sep):
+        folder_path += os.sep
+    
+    # Get all files in the folder
+    file_paths = glob.glob(os.path.join(folder_path, "*"))
+    
+    # Filter out directories
+    file_paths = [f for f in file_paths if os.path.isfile(f)]
+    
+    if not file_paths:
+        print(f"No files found in '{folder_path}'.")
+        return []
+    
+    # Upload each file
+    successful_uploads = []
+    for file_path in file_paths:
+        # Use just the filename for destination
+        destination_blob_name = os.path.basename(file_path)
+        
+        # Upload the file
+        gcs_path = upload_to_gcs_put(bucket_name, file_path, destination_blob_name)
+        
+        if gcs_path:
+            successful_uploads.append(gcs_path)
+    
+    # Report summary
+    print(f"\nUpload Summary:")
+    print(f"Total files processed: {len(file_paths)}")
+    print(f"Successfully uploaded: {len(successful_uploads)}")
+    print(f"Failed uploads: {len(file_paths) - len(successful_uploads)}")
+    
+    return successful_uploads
+
 def main():
     # Set your GCS bucket name
     bucket_name = "your-bucket-name"
     
-    # Set the local file path you want to upload
-    local_file_path = "path/to/your/model.joblib"
+    # Upload all files from the 'bucket_object' folder
+    successful_uploads = upload_folder_to_gcs(bucket_name)
     
-    # Optional: Set a custom name for the file in GCS
-    # destination_blob_name = "custom_model_name.joblib"
-    
-    # Upload the file using PUT method
-    gcs_path = upload_to_gcs_put(bucket_name, local_file_path)
-    
-    if gcs_path:
-        print(f"File uploaded successfully to: {gcs_path}")
+    if successful_uploads:
+        print(f"\nSuccessfully uploaded {len(successful_uploads)} files to gs://{bucket_name}/")
     else:
-        print("File upload failed.")
+        print("\nNo files were uploaded.")
 
 if __name__ == "__main__":
     main()
