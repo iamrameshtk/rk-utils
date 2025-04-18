@@ -42,8 +42,10 @@ class GCPResourceCleaner:
         self.is_service_account = is_service_account
         self.deleted_resources = []
         self.failed_resources = []
+        self.skipped_resources = []
         self.missing_permissions = []
         self.temp_files = []
+        self.skip_confirmation = False
         
         # Authenticate with GCP if token is provided
         if self.auth_token:
@@ -81,25 +83,30 @@ class GCPResourceCleaner:
                     logger.error(f"Service account authentication failed: {error}")
                     raise Exception("GCP service account authentication failed")
             else:
-                # Use as access token directly
+                # For access token, create a temporary file and activate it
+                fd, temp_path = tempfile.mkstemp(prefix='gcp_access_token_', suffix='.txt')
+                with os.fdopen(fd, 'w') as temp_file:
+                    temp_file.write(self.auth_token)
+                
+                self.temp_files.append(temp_path)
+                
+                # Try to authenticate using the token file
                 logger.info("Authenticating with access token...")
+                success, output, error = self._run_command(f"cat {temp_path} | gcloud auth activate-service-account --key-file=-")
                 
-                # Set the access token
-                success, output, error = self._run_command(f"gcloud config set auth/access_token {self.auth_token}")
-                
-                if success:
-                    logger.info("Successfully set access token")
+                if not success:
+                    # If that fails, try another method
+                    logger.info("Standard access token authentication failed, trying alternative method...")
+                    alt_success, alt_output, alt_error = self._run_command(f"gcloud auth print-access-token {self.auth_token}")
                     
-                    # Verify the token works
-                    verify_success, verify_output, verify_error = self._run_command("gcloud auth list")
-                    if verify_success:
-                        logger.info("Access token authentication verified")
+                    if alt_success:
+                        logger.info("Successfully authenticated with alternative method")
                     else:
-                        logger.error(f"Access token verification failed: {verify_error}")
-                        raise Exception("GCP access token verification failed")
+                        logger.error(f"Access token authentication failed: {error}")
+                        logger.error(f"Alternative method also failed: {alt_error}")
+                        raise Exception("GCP access token authentication failed")
                 else:
-                    logger.error(f"Failed to set access token: {error}")
-                    raise Exception("GCP access token authentication failed")
+                    logger.info("Successfully authenticated with access token")
                 
         except Exception as e:
             logger.error(f"Error during authentication: {str(e)}")
@@ -237,6 +244,23 @@ class GCPResourceCleaner:
             self.deleted_resources.append((resource_type, resource_name, "dry-run"))
             return True
             
+        # Get interactive approval for this specific resource
+        print(f"\nReady to delete: {resource_identifier}")
+        confirm = input("Delete this resource? (yes/no/all/quit): ").strip().lower()
+        
+        if confirm == "quit":
+            logger.info("User chose to quit. Stopping deletion process.")
+            print("\nDeletion process stopped by user.")
+            sys.exit(0)
+        elif confirm == "all":
+            # Set a flag to skip future confirmations
+            self.skip_confirmation = True
+            logger.info("User chose to delete all resources without further confirmation.")
+        elif confirm != "yes":
+            logger.info(f"User skipped deletion of {resource_identifier}")
+            self.skipped_resources.append((resource_type, resource_name, "user-skipped"))
+            return False
+            
         logger.info(f"Deleting {resource_identifier}...")
         success, output, error = self._run_command(formatted_command)
         
@@ -260,12 +284,16 @@ class GCPResourceCleaner:
         """
         if not resources:
             return
-            
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            executor.map(
-                lambda resource: self._delete_resource(resource_type, resource, delete_command),
-                resources
-            )
+        
+        # Since we need interactive confirmation, we can't use ThreadPoolExecutor here
+        # Instead, process resources sequentially
+        for resource in resources:
+            if hasattr(self, 'skip_confirmation') and self.skip_confirmation:
+                # User has chosen to delete all without confirmation
+                self._delete_resource(resource_type, resource, delete_command)
+            else:
+                # Get confirmation for each resource
+                self._delete_resource(resource_type, resource, delete_command)
 
     def cleanup_compute_instances(self) -> None:
         """Clean up Compute Engine instances"""
@@ -458,6 +486,14 @@ class GCPResourceCleaner:
         else:
             print("\nNo resources were deleted.")
             
+        # Skipped resources
+        if hasattr(self, 'skipped_resources') and self.skipped_resources:
+            print("\nSKIPPED RESOURCES:")
+            table_data = []
+            for resource_type, name, reason in self.skipped_resources:
+                table_data.append([resource_type, name, "⏭️ " + reason])
+            print(tabulate(table_data, headers=["Resource Type", "Name", "Reason"], tablefmt="grid"))
+            
         # Failed deletions
         if self.failed_resources:
             print("\nFAILED DELETIONS:")
@@ -475,6 +511,8 @@ class GCPResourceCleaner:
                 
         print("\nSUMMARY STATISTICS:")
         print(f"Total resources deleted: {len(self.deleted_resources)}")
+        skipped_count = len(self.skipped_resources) if hasattr(self, 'skipped_resources') else 0
+        print(f"Total resources skipped: {skipped_count}")
         print(f"Total failed deletions: {len(self.failed_resources)}")
         print(f"Resource types with missing permissions: {len(self.missing_permissions)}")
         
