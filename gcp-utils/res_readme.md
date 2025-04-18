@@ -1,17 +1,35 @@
-# GCP Resource Cleanup Utility
+## Per-Resource Deletion Control
 
-A comprehensive Python utility for cleaning up resources in Google Cloud Platform projects. This script helps you safely delete multiple resource types across your GCP project, with built-in safeguards, detailed logging, and interactive confirmation.
+One of the key features of this utility is granular control over resource deletion:
+
+### During Cleanup
+For each resource, you'll be prompted with:
+```
+Ready to delete: Compute Instance/instance-name (zone: us-central1-a)
+Delete this resource? (yes/no/all/quit):
+```
+
+Your options are:
+- **yes**: Delete only this specific resource
+- **no**: Skip this resource (it will be preserved)
+- **all**: Delete this resource and all remaining resources without further prompts
+- **quit**: Immediately stop the deletion process
+
+This prevents accidental deletion of critical resources while allowing for efficient bulk cleanup when appropriate.# GCP Resource Cleanup Utility
+
+A comprehensive Python utility for cleaning up resources in Google Cloud Platform projects. This script helps you safely delete multiple resource types across your GCP project, with built-in safeguards, detailed logging, and interactive confirmation for each resource.
 
 ## Features
 
-- **Interactive Interface**: Guided process with clear prompts and explicit confirmation
+- **Interactive Interface**: Guided process with clear prompts and per-resource confirmation
 - **Multiple Authentication Methods**: Support for both GCP Access Tokens and Service Account Tokens
+- **Granular Control**: Approve or skip deletion of each individual resource
+- **Batch Approval Option**: Option to approve all remaining deletions at once
 - **Comprehensive Resource Cleanup**: Handles multiple GCP resource types
-- **Concurrent Operations**: Uses thread pooling for faster resource deletion
 - **Dry Run Mode**: Preview what would be deleted without making any changes
 - **Enhanced Logging**: Detailed logs for tracking operations
 - **Error Handling**: Robust error catching and reporting
-- **Tabular Results**: Clean summary tables of deleted and failed resources
+- **Tabular Results**: Clean summary tables of deleted, skipped, and failed resources
 
 ## Resource Types Supported
 
@@ -82,9 +100,13 @@ When you run the script, it will guide you through the following steps:
 1. **Project Selection**: Enter your GCP Project ID
 2. **Authentication**: Choose between Access Token or Service Account authentication
 3. **Resource Preview**: See a list of resource types that will be affected
-4. **Confirmation**: Explicitly confirm before any deletions occur
-5. **Execution**: Resources are deleted (or just listed in dry-run mode)
-6. **Summary**: View a tabular report of results
+4. **Initial Confirmation**: Confirm that you want to proceed with the resource scan
+5. **Per-Resource Confirmation**: For each resource, choose whether to:
+   - `yes` - Delete this specific resource
+   - `no` - Skip this resource and preserve it
+   - `all` - Delete this and all remaining resources without further confirmation
+   - `quit` - Stop the deletion process immediately
+6. **Summary**: View a tabular report of deleted, skipped, and failed resources
 
 ## Authentication Methods
 
@@ -125,6 +147,13 @@ SUCCESSFULLY DELETED RESOURCES:
 | Cloud SQL        | my-database                | ✅ success |
 +------------------+----------------------------+----------+
 
+SKIPPED RESOURCES:
++------------------+----------------------------+---------------+
+| Resource Type    | Name                       | Reason        |
++==================+============================+===============+
+| Storage Bucket   | important-data-bucket      | ⏭️ user-skipped |
++------------------+----------------------------+---------------+
+
 FAILED DELETIONS:
 +----------------+------------------+-------------------------------+
 | Resource Type  | Name             | Error                         |
@@ -134,6 +163,7 @@ FAILED DELETIONS:
 
 SUMMARY STATISTICS:
 Total resources deleted: 15
+Total resources skipped: 3
 Total failed deletions: 1
 Resource types with missing permissions: 0
 ================================================================================
@@ -162,6 +192,8 @@ The script handles various error scenarios:
 - Always run with `--dry-run` first to see what would be deleted
 - Use the least privileged token necessary for the operation
 - Consider backing up critical data before running the script
+- Use the per-resource confirmation to selectively clean up your project
+- Use the "all" option only after reviewing the initial resources
 - Run during off-peak hours for large projects
 
 ## Limitations
