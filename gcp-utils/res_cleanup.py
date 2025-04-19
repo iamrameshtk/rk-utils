@@ -1,4 +1,179 @@
-def cleanup_iot(self) -> None:
+def main():
+    """Main function"""
+    parser = argparse.ArgumentParser(description="Clean up resources in a GCP project")
+    parser.add_argument("--project-id", "-p", help="GCP Project ID (optional, will prompt if not provided)")
+    parser.add_argument("--dry-run", "-d", action="store_true", help="Dry run mode (list only, no deletion)")
+    parser.add_argument("--workers", "-w", type=int, default=5, help="Maximum number of concurrent deletions")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
+    
+    args = parser.parse_args()
+    
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
+    
+    print("="*80)
+    print("GCP RESOURCE CLEANUP UTILITY")
+    print("="*80)
+    print("\nThis script will delete resources in a specified GCP project.")
+    
+    # Get project ID from command line or prompt
+    project_id = args.project_id
+    if not project_id:
+        project_id = input("\nEnter GCP Project ID: ").strip()
+        while not project_id:
+            print("Project ID cannot be empty.")
+            project_id = input("Enter GCP Project ID: ").strip()
+    
+    # Check for GCP_AUTH_TOKEN environment variable
+    auth_token = os.environ.get('GCP_AUTH_TOKEN')
+    if not auth_token:
+        print("\n⚠️  Environment variable GCP_AUTH_TOKEN not found.")
+        print("Please set the GCP_AUTH_TOKEN environment variable with your access token.")
+        print("Example: export GCP_AUTH_TOKEN=your_access_token")
+        sys.exit(1)
+    else:
+        logger.info("Found GCP_AUTH_TOKEN environment variable")
+    
+    # Display information about what will be done
+    print("\n" + "="*80)
+    print(f"READY TO CLEAN UP PROJECT: {project_id}")
+    print("="*80)
+    print("\nThis will scan for and delete the following resource types:")
+    print("- Compute Engine instances and disks")
+    print("- GKE clusters")
+    print("- Cloud SQL instances")
+    print("- Cloud Functions")
+    print("- Cloud Run services")
+    print("- Pub/Sub topics")
+    print("- Firestore indexes")
+    print("- Storage buckets")
+    print("- BigQuery datasets")
+    print("- VPC networks (excluding default)")
+    print("- Spanner instances and databases")
+    print("- Cloud Composer environments")
+    print("- Memorystore instances (Redis and Memcached)")
+    print("- Log Buckets and Log Sinks")
+    print("- Data Catalog entries and tag templates")
+    print("- Dataproc clusters")
+    print("- Dataproc Serverless batches and sessions")
+    print("- AI Platform resources (models, datasets, endpoints)")
+    print("- API Gateway resources")
+    print("- IoT Core registries and devices")
+    print("- Filestore instances")
+    
+    if args.dry_run:
+        print("\n⚠️  DRY RUN MODE: Resources will only be listed, not deleted.")
+    else:
+        print("\n⚠️  WARNING: THIS OPERATION WILL DELETE RESOURCES! IT CANNOT BE UNDONE!")
+    
+    # Get confirmation
+    confirm = input("\nAre you sure you want to proceed? (yes/no): ").strip().lower()
+    
+    if confirm != "yes":
+        print("Operation cancelled by user.")
+        return
+    
+    try:
+        cleaner = GCPResourceCleaner(
+            project_id=project_id,
+            dry_run=args.dry_run,
+            max_workers=args.workers,
+            auth_token=auth_token
+        )
+        cleaner.run_cleanup()
+    except KeyboardInterrupt:
+        logger.warning("Operation interrupted by user")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()    def run_cleanup(self) -> None:
+        """Run the full cleanup process"""
+        logger.info(f"Starting resource cleanup for project: {self.project_id}")
+        
+        # Call all cleanup methods
+        self.cleanup_compute_instances()
+        self.cleanup_compute_disks()
+        self.cleanup_gke_clusters()
+        self.cleanup_cloud_sql()
+        self.cleanup_cloud_functions()
+        self.cleanup_cloud_run()
+        self.cleanup_pubsub()
+        self.cleanup_firestore_indexes()
+        self.cleanup_storage_buckets()
+        self.cleanup_bigquery_datasets()
+        self.cleanup_vpc_networks()
+        
+        # Additional services
+        self.cleanup_spanner()
+        self.cleanup_composer()
+        self.cleanup_memorystore()
+        self.cleanup_logging()
+        self.cleanup_data_catalog()
+        self.cleanup_dataproc()
+        self.cleanup_dataproc_serverless()
+        self.cleanup_ai_platform()
+        self.cleanup_api_gateway()
+        self.cleanup_iot()
+        self.cleanup_filestore()
+        
+        # Print summary
+        self.print_summary()
+
+    def print_summary(self) -> None:
+        """Print a summary of the cleanup operation"""
+        print("\n" + "="*80)
+        print(f"GCP RESOURCE CLEANUP SUMMARY FOR PROJECT: {self.project_id}")
+        print("="*80)
+        
+        # Successful deletions
+        if self.deleted_resources:
+            print("\nSUCCESSFULLY DELETED RESOURCES:")
+            table_data = []
+            for resource_type, name, status in self.deleted_resources:
+                table_data.append([resource_type, name, "✅ " + status])
+            print(tabulate(table_data, headers=["Resource Type", "Name", "Status"], tablefmt="grid"))
+        else:
+            print("\nNo resources were deleted.")
+            
+        # Skipped resources
+        if self.skipped_resources:
+            print("\nSKIPPED RESOURCES:")
+            table_data = []
+            for resource_type, name, reason in self.skipped_resources:
+                table_data.append([resource_type, name, "⏭️ " + reason])
+            print(tabulate(table_data, headers=["Resource Type", "Name", "Reason"], tablefmt="grid"))
+            
+        # Failed deletions
+        if self.failed_resources:
+            print("\nFAILED DELETIONS:")
+            table_data = []
+            for resource_type, name, error in self.failed_resources:
+                error_msg = (error[:47] + '...') if len(error) > 50 else error
+                table_data.append([resource_type, name, "❌ " + error_msg])
+            print(tabulate(table_data, headers=["Resource Type", "Name", "Error"], tablefmt="grid"))
+            
+        # Missing permissions
+        if self.missing_permissions:
+            print("\nMISSING PERMISSIONS:")
+            for resource_type in self.missing_permissions:
+                print(f"⚠️  {resource_type}")
+                
+        print("\nSUMMARY STATISTICS:")
+        print(f"Total resources deleted: {len(self.deleted_resources)}")
+        print(f"Total resources skipped: {len(self.skipped_resources)}")
+        print(f"Total failed deletions: {len(self.failed_resources)}")
+        print(f"Resource types with missing permissions: {len(self.missing_permissions)}")
+        
+        if self.dry_run:
+            print("\n⚠️  THIS WAS A DRY RUN. NO ACTUAL DELETIONS WERE PERFORMED.")
+            
+        print("="*80)
+        
+        # Clean up temporary files
+        self._cleanup_temp_files()    def cleanup_iot(self) -> None:
         """Clean up IoT Core resources"""
         if not self._is_service_enabled("cloudiot.googleapis.com"):
             logger.info("IoT Core API is not enabled. Skipping IoT Core cleanup.")
@@ -174,349 +349,7 @@ def cleanup_iot(self) -> None:
             "API Gateway API",
             api_resources,
             "gcloud api-gateway apis delete {name} --quiet"
-        )    def cleanup_dataproc(self) -> None:
-        """Clean up Dataproc clusters"""
-        if not self._is_service_enabled("dataproc.googleapis.com"):
-            logger.info("Dataproc API is not enabled. Skipping Dataproc cleanup.")
-            return
-            
-        # Get regions where Dataproc is available for this project
-        regions_cmd = "gcloud dataproc regions list --format=json"
-        success, output, error = self._run_command(regions_cmd)
-        
-        if not success or not output:
-            logger.warning(f"Failed to list Dataproc regions: {error}")
-            return
-            
-        try:
-            regions = json.loads(output)
-            region_names = [region.get('name') for region in regions if 'name' in region]
-        except json.JSONDecodeError:
-            logger.error("Failed to parse Dataproc regions output")
-            region_names = ['global', 'us-central1', 'us-east1', 'us-east4', 'us-west1', 'us-west2', 'us-west3', 'us-west4']  # Default regions
-        
-        # Check each region for clusters
-        for region in region_names:
-            logger.info(f"Checking for Dataproc clusters in region: {region}")
-            
-            cluster_resources = self._list_resources(
-                f"Dataproc clusters in {region}",
-                f"gcloud dataproc clusters list --region={region} --format=json"
-            )
-            
-            # Add region to each resource for deletion command
-            for resource in cluster_resources:
-                resource['region'] = region
-                
-            self._delete_resources(
-                "Dataproc Cluster",
-                cluster_resources,
-                "gcloud dataproc clusters delete {name} --region={region} --quiet"
-            )
-            
-    def cleanup_dataproc_serverless(self) -> None:
-        """Clean up Dataproc Serverless batches and sessions"""
-        if not self._is_service_enabled("dataproc.googleapis.com"):
-            logger.info("Dataproc API is not enabled. Skipping Dataproc Serverless cleanup.")
-            return
-            
-        # Get regions where Dataproc is available
-        regions_cmd = "gcloud dataproc regions list --format=json"
-        success, output, error = self._run_command(regions_cmd)
-        
-        if not success or not output:
-            logger.warning(f"Failed to list Dataproc regions: {error}")
-            return
-            
-        try:
-            regions = json.loads(output)
-            region_names = [region.get('name') for region in regions if 'name' in region]
-        except json.JSONDecodeError:
-            logger.error("Failed to parse Dataproc regions output")
-            region_names = ['global', 'us-central1', 'us-east1', 'us-east4', 'us-west1', 'us-west2', 'us-west3', 'us-west4']  # Default regions
-        
-        # For each region, delete batches and sessions
-        for region in region_names:
-            # Clean up batches
-            batch_resources = self._list_resources(
-                f"Dataproc Serverless batches in {region}",
-                f"gcloud dataproc batches list --region={region} --format=json"
-            )
-            
-            # Add region to each resource for deletion command
-            for resource in batch_resources:
-                resource['region'] = region
-                
-            self._delete_resources(
-                "Dataproc Serverless Batch",
-                batch_resources,
-                "gcloud dataproc batches delete {name} --region={region} --quiet"
-            )
-            
-            # Clean up sessions
-            session_resources = self._list_resources(
-                f"Dataproc Serverless sessions in {region}",
-                f"gcloud dataproc sessions list --region={region} --format=json"
-            )
-            
-            # Add region to each resource for deletion command
-            for resource in session_resources:
-                resource['region'] = region
-                
-            self._delete_resources(
-                "Dataproc Serverless Session",
-                session_resources,
-                "gcloud dataproc sessions delete {name} --region={region} --quiet"
-            )    def cleanup_logging(self) -> None:
-        """Clean up Log Buckets and Log Sinks"""
-        if not self._is_service_enabled("logging.googleapis.com"):
-            logger.info("Logging API is not enabled. Skipping Logging cleanup.")
-            return
-            
-        # First clean up log sinks
-        sink_resources = self._list_resources(
-            "Log Sinks",
-            "gcloud logging sinks list --format=json"
-        )
-        
-        # Skip _Default sink which cannot be deleted
-        filtered_sinks = [sink for sink in sink_resources if sink.get('name') != '_Default']
-        
-        self._delete_resources(
-            "Log Sink",
-            filtered_sinks,
-            "gcloud logging sinks delete {name} --quiet"
-        )
-        
-        # Then clean up log buckets (only user-created ones, not _Default or _Required)
-        bucket_resources = self._list_resources(
-            "Log Buckets",
-            "gcloud logging buckets list --format=json"
-        )
-        
-        # Filter out default and required buckets
-        filtered_buckets = []
-        for bucket in bucket_resources:
-            bucket_name = bucket.get('name', '')
-            # Skip default and required buckets
-            if bucket_name.endswith('_Default') or bucket_name.endswith('_Required'):
-                continue
-                
-            # Extract location and bucket name from the full path
-            # Format is typically "projects/PROJECT_ID/locations/LOCATION/buckets/BUCKET_ID"
-            parts = bucket_name.split('/')
-            if len(parts) >= 6:
-                bucket['location'] = parts[3]
-                bucket['bucket_id'] = parts[5]
-                filtered_buckets.append(bucket)
-        
-        self._delete_resources(
-            "Log Bucket",
-            filtered_buckets,
-            "gcloud logging buckets delete {bucket_id} --location={location} --quiet"
-        )
-
-    def cleanup_data_catalog(self) -> None:
-        """Clean up Data Catalog entries and tag templates"""
-        if not self._is_service_enabled("datacatalog.googleapis.com"):
-            logger.info("Data Catalog API is not enabled. Skipping Data Catalog cleanup.")
-            return
-            
-        # First clean up entries
-        entry_resources = self._list_resources(
-            "Data Catalog entries",
-            "gcloud data-catalog entries list --format=json"
-        )
-        
-        # Format entry resources for deletion
-        formatted_entries = []
-        for entry in entry_resources:
-            if 'name' in entry:
-                formatted_entries.append(entry)
-        
-        self._delete_resources(
-            "Data Catalog Entry",
-            formatted_entries,
-            "gcloud data-catalog entries delete {name} --quiet"
-        )
-        
-        # Then clean up tag templates
-        template_resources = self._list_resources(
-            "Data Catalog tag templates",
-            "gcloud data-catalog tag-templates list --format=json"
-        )
-        
-        # Format template resources for deletion
-        formatted_templates = []
-        for template in template_resources:
-            if 'name' in template:
-                # Extract location and template ID
-                parts = template['name'].split('/')
-                if len(parts) >= 6:  # Format: projects/PROJECT/locations/LOCATION/tagTemplates/TEMPLATE_ID
-                    template['location'] = parts[3]
-                    template['template_id'] = parts[5]
-                    formatted_templates.append(template)
-        
-        self._delete_resources(
-            "Data Catalog Tag Template",
-            formatted_templates,
-            "gcloud data-catalog tag-templates delete {template_id} --location={location} --force --quiet"
-        )    def cleanup_spanner(self) -> None:
-        """Clean up Spanner instances and databases"""
-        if not self._is_service_enabled("spanner.googleapis.com"):
-            logger.info("Spanner API is not enabled. Skipping Spanner cleanup.")
-            return
-
-        # First list all instances
-        instances = self._list_resources(
-            "Spanner instances",
-            "gcloud spanner instances list --format=json"
-        )
-        
-        if not instances:
-            logger.info("No Spanner instances found")
-            return
-
-        for instance in instances:
-            instance_id = instance.get('name', '').split('/')[-1]
-            if not instance_id:
-                continue
-                
-            # For each instance, list its databases first
-            databases = self._list_resources(
-                f"Spanner databases in instance {instance_id}",
-                f"gcloud spanner databases list --instance={instance_id} --format=json"
-            )
-            
-            # Delete each database first
-            for db in databases:
-                db_id = db.get('name', '').split('/')[-1]
-                if not db_id:
-                    continue
-                    
-                db_resource = {
-                    "name": db_id,
-                    "instance": instance_id
-                }
-                self._delete_resource(
-                    "Spanner Database",
-                    db_resource,
-                    "gcloud spanner databases delete {name} --instance={instance} --quiet"
-                )
-            
-            # Then delete the instance itself
-            self._delete_resource(
-                "Spanner Instance",
-                instance,
-                "gcloud spanner instances delete {name} --quiet"
-            )
-
-    def cleanup_composer(self) -> None:
-        """Clean up Cloud Composer environments"""
-        if not self._is_service_enabled("composer.googleapis.com"):
-            logger.info("Cloud Composer API is not enabled. Skipping Composer cleanup.")
-            return
-            
-        resources = self._list_resources(
-            "Cloud Composer environments",
-            "gcloud composer environments list --format=json"
-        )
-        
-        for resource in resources:
-            # Extract location and name from the full path
-            if 'name' in resource:
-                parts = resource['name'].split('/')
-                if len(parts) >= 6:  # Format: projects/PROJECT/locations/LOCATION/environments/NAME
-                    resource['location'] = parts[3]
-                    resource['env_name'] = parts[5]
-        
-        self._delete_resources(
-            "Cloud Composer Environment",
-            resources,
-            "gcloud composer environments delete {env_name} --location={location} --quiet"
-        )
-
-    def cleanup_memorystore(self) -> None:
-        """Clean up Memorystore instances (Redis and Memcached)"""
-        # Check for Redis API
-        redis_enabled = self._is_service_enabled("redis.googleapis.com")
-        memcached_enabled = self._is_service_enabled("memcache.googleapis.com")
-        
-        if not redis_enabled and not memcached_enabled:
-            logger.info("Neither Redis nor Memcached APIs are enabled. Skipping Memorystore cleanup.")
-            return
-            
-        # Clean up Redis instances
-        if redis_enabled:
-            redis_resources = self._list_resources(
-                "Memorystore Redis instances",
-                "gcloud redis instances list --format=json"
-            )
-            
-            for resource in redis_resources:
-                # Extract location and name from the full path
-                if 'name' in resource:
-                    parts = resource['name'].split('/')
-                    if len(parts) >= 6:  # Format: projects/PROJECT/locations/LOCATION/instances/NAME
-                        resource['location'] = parts[3]
-                        resource['instance_id'] = parts[5]
-            
-            self._delete_resources(
-                "Memorystore Redis Instance",
-                redis_resources,
-                "gcloud redis instances delete {instance_id} --region={location} --quiet"
-            )
-            
-        # Clean up Memcached instances
-        if memcached_enabled:
-            memcached_resources = self._list_resources(
-                "Memorystore Memcached instances",
-                "gcloud memcache instances list --format=json"
-            )
-            
-            for resource in memcached_resources:
-                # Extract location and name from the full path
-                if 'name' in resource:
-                    parts = resource['name'].split('/')
-                    if len(parts) >= 6:  # Format: projects/PROJECT/locations/LOCATION/instances/NAME
-                        resource['location'] = parts[3]
-                        resource['instance_id'] = parts[5]
-            
-            self._delete_resources(
-                "Memorystore Memcached Instance",
-                memcached_resources,
-                "gcloud memcache instances delete {instance_id} --region={location} --quiet"
-            )    def _is_service_enabled(self, service_name: str) -> bool:
-        """
-        Check if a specific GCP service is enabled for the project.
-        
-        Args:
-            service_name: The service name to check (e.g., compute.googleapis.com)
-            
-        Returns:
-            bool: True if the service is enabled, False otherwise
-        """
-        logger.info(f"Checking if {service_name} is enabled...")
-        check_cmd = f"gcloud services list --enabled --filter={service_name} --format=json --project={self.project_id}"
-        success, output, error = self._run_command(check_cmd)
-        
-        if not success:
-            logger.warning(f"Failed to check if {service_name} is enabled: {error}")
-            return False
-            
-        try:
-            services = json.loads(output) if output else []
-            is_enabled = len(services) > 0
-            
-            if is_enabled:
-                logger.info(f"Service {service_name} is enabled for this project")
-            else:
-                logger.info(f"Service {service_name} is not enabled for this project")
-                
-            return is_enabled
-        except json.JSONDecodeError:
-            logger.error(f"Failed to parse service check result for {service_name}")
-            return False#!/usr/bin/env python3
+        )#!/usr/bin/env python3
 import subprocess
 import json
 import logging
@@ -626,6 +459,38 @@ class GCPResourceCleaner:
         except Exception as e:
             logger.error(f"Command execution error: {str(e)}")
             return (False, "", str(e))
+
+    def _is_service_enabled(self, service_name: str) -> bool:
+        """
+        Check if a specific GCP service is enabled for the project.
+        
+        Args:
+            service_name: The service name to check (e.g., compute.googleapis.com)
+            
+        Returns:
+            bool: True if the service is enabled, False otherwise
+        """
+        logger.info(f"Checking if {service_name} is enabled...")
+        check_cmd = f"gcloud services list --enabled --filter={service_name} --format=json --project={self.project_id}"
+        success, output, error = self._run_command(check_cmd)
+        
+        if not success:
+            logger.warning(f"Failed to check if {service_name} is enabled: {error}")
+            return False
+            
+        try:
+            services = json.loads(output) if output else []
+            is_enabled = len(services) > 0
+            
+            if is_enabled:
+                logger.info(f"Service {service_name} is enabled for this project")
+            else:
+                logger.info(f"Service {service_name} is not enabled for this project")
+                
+            return is_enabled
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse service check result for {service_name}")
+            return False
 
     def _parse_resources(self, output: str, format_type: str) -> List[Dict[str, str]]:
         """
@@ -997,181 +862,320 @@ class GCPResourceCleaner:
             "gcloud compute networks delete {name} --quiet"
         )
 
-    def run_cleanup(self) -> None:
-        """Run the full cleanup process"""
-        logger.info(f"Starting resource cleanup for project: {self.project_id}")
-        
-        # Call all cleanup methods
-        self.cleanup_compute_instances()
-        self.cleanup_compute_disks()
-        self.cleanup_gke_clusters()
-        self.cleanup_cloud_sql()
-        self.cleanup_cloud_functions()
-        self.cleanup_cloud_run()
-        self.cleanup_pubsub()
-        self.cleanup_firestore_indexes()
-        self.cleanup_storage_buckets()
-        self.cleanup_bigquery_datasets()
-        self.cleanup_vpc_networks()
-        
-        # Additional services
-        self.cleanup_spanner()
-        self.cleanup_composer()
-        self.cleanup_memorystore()
-        self.cleanup_logging()
-        self.cleanup_data_catalog()
-        self.cleanup_dataproc()
-        self.cleanup_dataproc_serverless()
-        self.cleanup_ai_platform()
-        self.cleanup_api_gateway()
-        self.cleanup_iot()
-        self.cleanup_filestore()
-        
-        # Print summary
-        self.print_summary()
+    def cleanup_spanner(self) -> None:
+        """Clean up Spanner instances and databases"""
+        if not self._is_service_enabled("spanner.googleapis.com"):
+            logger.info("Spanner API is not enabled. Skipping Spanner cleanup.")
+            return
 
-    def print_summary(self) -> None:
-        """Print a summary of the cleanup operation"""
-        print("\n" + "="*80)
-        print(f"GCP RESOURCE CLEANUP SUMMARY FOR PROJECT: {self.project_id}")
-        print("="*80)
-        
-        # Successful deletions
-        if self.deleted_resources:
-            print("\nSUCCESSFULLY DELETED RESOURCES:")
-            table_data = []
-            for resource_type, name, status in self.deleted_resources:
-                table_data.append([resource_type, name, "✅ " + status])
-            print(tabulate(table_data, headers=["Resource Type", "Name", "Status"], tablefmt="grid"))
-        else:
-            print("\nNo resources were deleted.")
-            
-        # Skipped resources
-        if self.skipped_resources:
-            print("\nSKIPPED RESOURCES:")
-            table_data = []
-            for resource_type, name, reason in self.skipped_resources:
-                table_data.append([resource_type, name, "⏭️ " + reason])
-            print(tabulate(table_data, headers=["Resource Type", "Name", "Reason"], tablefmt="grid"))
-            
-        # Failed deletions
-        if self.failed_resources:
-            print("\nFAILED DELETIONS:")
-            table_data = []
-            for resource_type, name, error in self.failed_resources:
-                error_msg = (error[:47] + '...') if len(error) > 50 else error
-                table_data.append([resource_type, name, "❌ " + error_msg])
-            print(tabulate(table_data, headers=["Resource Type", "Name", "Error"], tablefmt="grid"))
-            
-        # Missing permissions
-        if self.missing_permissions:
-            print("\nMISSING PERMISSIONS:")
-            for resource_type in self.missing_permissions:
-                print(f"⚠️  {resource_type}")
-                
-        print("\nSUMMARY STATISTICS:")
-        print(f"Total resources deleted: {len(self.deleted_resources)}")
-        print(f"Total resources skipped: {len(self.skipped_resources)}")
-        print(f"Total failed deletions: {len(self.failed_resources)}")
-        print(f"Resource types with missing permissions: {len(self.missing_permissions)}")
-        
-        if self.dry_run:
-            print("\n⚠️  THIS WAS A DRY RUN. NO ACTUAL DELETIONS WERE PERFORMED.")
-            
-        print("="*80)
-        
-        # Clean up temporary files
-        self._cleanup_temp_files()
-
-def main():
-    """Main function"""
-    parser = argparse.ArgumentParser(description="Clean up resources in a GCP project")
-    parser.add_argument("--project-id", "-p", help="GCP Project ID (optional, will prompt if not provided)")
-    parser.add_argument("--dry-run", "-d", action="store_true", help="Dry run mode (list only, no deletion)")
-    parser.add_argument("--workers", "-w", type=int, default=5, help="Maximum number of concurrent deletions")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
-    
-    args = parser.parse_args()
-    
-    if args.verbose:
-        logger.setLevel(logging.DEBUG)
-    
-    print("="*80)
-    print("GCP RESOURCE CLEANUP UTILITY")
-    print("="*80)
-    print("\nThis script will delete resources in a specified GCP project.")
-    
-    # Get project ID from command line or prompt
-    project_id = args.project_id
-    if not project_id:
-        project_id = input("\nEnter GCP Project ID: ").strip()
-        while not project_id:
-            print("Project ID cannot be empty.")
-            project_id = input("Enter GCP Project ID: ").strip()
-    
-    # Check for GCP_AUTH_TOKEN environment variable
-    auth_token = os.environ.get('GCP_AUTH_TOKEN')
-    if not auth_token:
-        print("\n⚠️  Environment variable GCP_AUTH_TOKEN not found.")
-        print("Please set the GCP_AUTH_TOKEN environment variable with your access token.")
-        print("Example: export GCP_AUTH_TOKEN=your_access_token")
-        sys.exit(1)
-    else:
-        logger.info("Found GCP_AUTH_TOKEN environment variable")
-    
-    # Display information about what will be done
-    print("\n" + "="*80)
-    print(f"READY TO CLEAN UP PROJECT: {project_id}")
-    print("="*80)
-    print("\nThis will scan for and delete the following resource types:")
-    print("- Compute Engine instances and disks")
-    print("- GKE clusters")
-    print("- Cloud SQL instances")
-    print("- Cloud Functions")
-    print("- Cloud Run services")
-    print("- Pub/Sub topics")
-    print("- Firestore indexes")
-    print("- Storage buckets")
-    print("- BigQuery datasets")
-    print("- VPC networks (excluding default)")
-    print("- Spanner instances and databases")
-    print("- Cloud Composer environments")
-    print("- Memorystore instances (Redis and Memcached)")
-    print("- Log Buckets and Log Sinks")
-    print("- Data Catalog entries and tag templates")
-    print("- Dataproc clusters")
-    print("- Dataproc Serverless batches and sessions")
-    print("- AI Platform resources (models, datasets, endpoints)")
-    print("- API Gateway resources")
-    print("- IoT Core registries and devices")
-    print("- Filestore instances")
-    
-    if args.dry_run:
-        print("\n⚠️  DRY RUN MODE: Resources will only be listed, not deleted.")
-    else:
-        print("\n⚠️  WARNING: THIS OPERATION WILL DELETE RESOURCES! IT CANNOT BE UNDONE!")
-    
-    # Get confirmation
-    confirm = input("\nAre you sure you want to proceed? (yes/no): ").strip().lower()
-    
-    if confirm != "yes":
-        print("Operation cancelled by user.")
-        return
-    
-    try:
-        cleaner = GCPResourceCleaner(
-            project_id=project_id,
-            dry_run=args.dry_run,
-            max_workers=args.workers,
-            auth_token=auth_token
+        # First list all instances
+        instances = self._list_resources(
+            "Spanner instances",
+            "gcloud spanner instances list --format=json"
         )
-        cleaner.run_cleanup()
-    except KeyboardInterrupt:
-        logger.warning("Operation interrupted by user")
-        sys.exit(1)
-    except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
-        sys.exit(1)
+        
+        if not instances:
+            logger.info("No Spanner instances found")
+            return
 
-if __name__ == "__main__":
-    main()
+        for instance in instances:
+            instance_id = instance.get('name', '').split('/')[-1]
+            if not instance_id:
+                continue
+                
+            # For each instance, list its databases first
+            databases = self._list_resources(
+                f"Spanner databases in instance {instance_id}",
+                f"gcloud spanner databases list --instance={instance_id} --format=json"
+            )
+            
+            # Delete each database first
+            for db in databases:
+                db_id = db.get('name', '').split('/')[-1]
+                if not db_id:
+                    continue
+                    
+                db_resource = {
+                    "name": db_id,
+                    "instance": instance_id
+                }
+                self._delete_resource(
+                    "Spanner Database",
+                    db_resource,
+                    "gcloud spanner databases delete {name} --instance={instance} --quiet"
+                )
+            
+            # Then delete the instance itself
+            self._delete_resource(
+                "Spanner Instance",
+                instance,
+                "gcloud spanner instances delete {name} --quiet"
+            )
+
+    def cleanup_composer(self) -> None:
+        """Clean up Cloud Composer environments"""
+        if not self._is_service_enabled("composer.googleapis.com"):
+            logger.info("Cloud Composer API is not enabled. Skipping Composer cleanup.")
+            return
+            
+        resources = self._list_resources(
+            "Cloud Composer environments",
+            "gcloud composer environments list --format=json"
+        )
+        
+        for resource in resources:
+            # Extract location and name from the full path
+            if 'name' in resource:
+                parts = resource['name'].split('/')
+                if len(parts) >= 6:  # Format: projects/PROJECT/locations/LOCATION/environments/NAME
+                    resource['location'] = parts[3]
+                    resource['env_name'] = parts[5]
+        
+        self._delete_resources(
+            "Cloud Composer Environment",
+            resources,
+            "gcloud composer environments delete {env_name} --location={location} --quiet"
+        )
+
+    def cleanup_memorystore(self) -> None:
+        """Clean up Memorystore instances (Redis and Memcached)"""
+        # Check for Redis API
+        redis_enabled = self._is_service_enabled("redis.googleapis.com")
+        memcached_enabled = self._is_service_enabled("memcache.googleapis.com")
+        
+        if not redis_enabled and not memcached_enabled:
+            logger.info("Neither Redis nor Memcached APIs are enabled. Skipping Memorystore cleanup.")
+            return
+            
+        # Clean up Redis instances
+        if redis_enabled:
+            redis_resources = self._list_resources(
+                "Memorystore Redis instances",
+                "gcloud redis instances list --format=json"
+            )
+            
+            for resource in redis_resources:
+                # Extract location and name from the full path
+                if 'name' in resource:
+                    parts = resource['name'].split('/')
+                    if len(parts) >= 6:  # Format: projects/PROJECT/locations/LOCATION/instances/NAME
+                        resource['location'] = parts[3]
+                        resource['instance_id'] = parts[5]
+            
+            self._delete_resources(
+                "Memorystore Redis Instance",
+                redis_resources,
+                "gcloud redis instances delete {instance_id} --region={location} --quiet"
+            )
+            
+        # Clean up Memcached instances
+        if memcached_enabled:
+            memcached_resources = self._list_resources(
+                "Memorystore Memcached instances",
+                "gcloud memcache instances list --format=json"
+            )
+            
+            for resource in memcached_resources:
+                # Extract location and name from the full path
+                if 'name' in resource:
+                    parts = resource['name'].split('/')
+                    if len(parts) >= 6:  # Format: projects/PROJECT/locations/LOCATION/instances/NAME
+                        resource['location'] = parts[3]
+                        resource['instance_id'] = parts[5]
+            
+            self._delete_resources(
+                "Memorystore Memcached Instance",
+                memcached_resources,
+                "gcloud memcache instances delete {instance_id} --region={location} --quiet"
+            )
+
+    def cleanup_logging(self) -> None:
+        """Clean up Log Buckets and Log Sinks"""
+        if not self._is_service_enabled("logging.googleapis.com"):
+            logger.info("Logging API is not enabled. Skipping Logging cleanup.")
+            return
+            
+        # First clean up log sinks
+        sink_resources = self._list_resources(
+            "Log Sinks",
+            "gcloud logging sinks list --format=json"
+        )
+        
+        # Skip _Default sink which cannot be deleted
+        filtered_sinks = [sink for sink in sink_resources if sink.get('name') != '_Default']
+        
+        self._delete_resources(
+            "Log Sink",
+            filtered_sinks,
+            "gcloud logging sinks delete {name} --quiet"
+        )
+        
+        # Then clean up log buckets (only user-created ones, not _Default or _Required)
+        bucket_resources = self._list_resources(
+            "Log Buckets",
+            "gcloud logging buckets list --format=json"
+        )
+        
+        # Filter out default and required buckets
+        filtered_buckets = []
+        for bucket in bucket_resources:
+            bucket_name = bucket.get('name', '')
+            # Skip default and required buckets
+            if bucket_name.endswith('_Default') or bucket_name.endswith('_Required'):
+                continue
+                
+            # Extract location and bucket name from the full path
+            # Format is typically "projects/PROJECT_ID/locations/LOCATION/buckets/BUCKET_ID"
+            parts = bucket_name.split('/')
+            if len(parts) >= 6:
+                bucket['location'] = parts[3]
+                bucket['bucket_id'] = parts[5]
+                filtered_buckets.append(bucket)
+        
+        self._delete_resources(
+            "Log Bucket",
+            filtered_buckets,
+            "gcloud logging buckets delete {bucket_id} --location={location} --quiet"
+        )
+
+    def cleanup_data_catalog(self) -> None:
+        """Clean up Data Catalog entries and tag templates"""
+        if not self._is_service_enabled("datacatalog.googleapis.com"):
+            logger.info("Data Catalog API is not enabled. Skipping Data Catalog cleanup.")
+            return
+            
+        # First clean up entries
+        entry_resources = self._list_resources(
+            "Data Catalog entries",
+            "gcloud data-catalog entries list --format=json"
+        )
+        
+        # Format entry resources for deletion
+        formatted_entries = []
+        for entry in entry_resources:
+            if 'name' in entry:
+                formatted_entries.append(entry)
+        
+        self._delete_resources(
+            "Data Catalog Entry",
+            formatted_entries,
+            "gcloud data-catalog entries delete {name} --quiet"
+        )
+        
+        # Then clean up tag templates
+        template_resources = self._list_resources(
+            "Data Catalog tag templates",
+            "gcloud data-catalog tag-templates list --format=json"
+        )
+        
+        # Format template resources for deletion
+        formatted_templates = []
+        for template in template_resources:
+            if 'name' in template:
+                # Extract location and template ID
+                parts = template['name'].split('/')
+                if len(parts) >= 6:  # Format: projects/PROJECT/locations/LOCATION/tagTemplates/TEMPLATE_ID
+                    template['location'] = parts[3]
+                    template['template_id'] = parts[5]
+                    formatted_templates.append(template)
+        
+        self._delete_resources(
+            "Data Catalog Tag Template",
+            formatted_templates,
+            "gcloud data-catalog tag-templates delete {template_id} --location={location} --force --quiet"
+        )
+
+    def cleanup_dataproc(self) -> None:
+        """Clean up Dataproc clusters"""
+        if not self._is_service_enabled("dataproc.googleapis.com"):
+            logger.info("Dataproc API is not enabled. Skipping Dataproc cleanup.")
+            return
+            
+        # Get regions where Dataproc is available for this project
+        regions_cmd = "gcloud dataproc regions list --format=json"
+        success, output, error = self._run_command(regions_cmd)
+        
+        if not success or not output:
+            logger.warning(f"Failed to list Dataproc regions: {error}")
+            return
+            
+        try:
+            regions = json.loads(output)
+            region_names = [region.get('name') for region in regions if 'name' in region]
+        except json.JSONDecodeError:
+            logger.error("Failed to parse Dataproc regions output")
+            region_names = ['global', 'us-central1', 'us-east1', 'us-east4', 'us-west1', 'us-west2', 'us-west3', 'us-west4']  # Default regions
+        
+        # Check each region for clusters
+        for region in region_names:
+            logger.info(f"Checking for Dataproc clusters in region: {region}")
+            
+            cluster_resources = self._list_resources(
+                f"Dataproc clusters in {region}",
+                f"gcloud dataproc clusters list --region={region} --format=json"
+            )
+            
+            # Add region to each resource for deletion command
+            for resource in cluster_resources:
+                resource['region'] = region
+                
+            self._delete_resources(
+                "Dataproc Cluster",
+                cluster_resources,
+                "gcloud dataproc clusters delete {name} --region={region} --quiet"
+            )
+            
+    def cleanup_dataproc_serverless(self) -> None:
+        """Clean up Dataproc Serverless batches and sessions"""
+        if not self._is_service_enabled("dataproc.googleapis.com"):
+            logger.info("Dataproc API is not enabled. Skipping Dataproc Serverless cleanup.")
+            return
+            
+        # Get regions where Dataproc is available
+        regions_cmd = "gcloud dataproc regions list --format=json"
+        success, output, error = self._run_command(regions_cmd)
+        
+        if not success or not output:
+            logger.warning(f"Failed to list Dataproc regions: {error}")
+            return
+            
+        try:
+            regions = json.loads(output)
+            region_names = [region.get('name') for region in regions if 'name' in region]
+        except json.JSONDecodeError:
+            logger.error("Failed to parse Dataproc regions output")
+            region_names = ['global', 'us-central1', 'us-east1', 'us-east4', 'us-west1', 'us-west2', 'us-west3', 'us-west4']  # Default regions
+        
+        # For each region, delete batches and sessions
+        for region in region_names:
+            # Clean up batches
+            batch_resources = self._list_resources(
+                f"Dataproc Serverless batches in {region}",
+                f"gcloud dataproc batches list --region={region} --format=json"
+            )
+            
+            # Add region to each resource for deletion command
+            for resource in batch_resources:
+                resource['region'] = region
+                
+            self._delete_resources(
+                "Dataproc Serverless Batch",
+                batch_resources,
+                "gcloud dataproc batches delete {name} --region={region} --quiet"
+            )
+            
+            # Clean up sessions
+            session_resources = self._list_resources(
+                f"Dataproc Serverless sessions in {region}",
+                f"gcloud dataproc sessions list --region={region} --format=json"
+            )
+            
+            # Add region to each resource for deletion command
+            for resource in session_resources:
+                resource['region'] = region
+                
+            self._delete_resources(
+                "Dataproc Serverless Session",
+                session_resources,
+                "gcloud dataproc sessions delete {name} --region={region} --quiet"
+            )
