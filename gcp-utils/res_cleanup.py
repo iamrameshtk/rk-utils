@@ -89,40 +89,7 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    main()    def run_cleanup(self) -> None:
-        """Run the full cleanup process"""
-        logger.info(f"Starting resource cleanup for project: {self.project_id}")
-        
-        # Call all cleanup methods
-        self.cleanup_compute_instances()
-        self.cleanup_compute_disks()
-        self.cleanup_gke_clusters()
-        self.cleanup_cloud_sql()
-        self.cleanup_cloud_functions()
-        self.cleanup_cloud_run()
-        self.cleanup_pubsub()
-        self.cleanup_firestore_indexes()
-        self.cleanup_storage_buckets()
-        self.cleanup_bigquery_datasets()
-        self.cleanup_vpc_networks()
-        
-        # Additional services
-        self.cleanup_spanner()
-        self.cleanup_composer()
-        self.cleanup_memorystore()
-        self.cleanup_logging()
-        self.cleanup_data_catalog()
-        self.cleanup_dataproc()
-        self.cleanup_dataproc_serverless()
-        self.cleanup_ai_platform()
-        self.cleanup_api_gateway()
-        self.cleanup_iot()
-        self.cleanup_filestore()
-        
-        # Print summary
-        self.print_summary()
-
-    def print_summary(self) -> None:
+    main()    def print_summary(self):
         """Print a summary of the cleanup operation"""
         print("\n" + "="*80)
         print(f"GCP RESOURCE CLEANUP SUMMARY FOR PROJECT: {self.project_id}")
@@ -173,7 +140,72 @@ if __name__ == "__main__":
         print("="*80)
         
         # Clean up temporary files
-        self._cleanup_temp_files()    def cleanup_iot(self) -> None:
+        self._cleanup_temp_files()    def run_cleanup(self):
+        """Run the full cleanup process"""
+        logger.info(f"Starting resource cleanup for project: {self.project_id}")
+        
+        # Call all cleanup methods
+        self.cleanup_compute_instances()
+        self.cleanup_compute_disks()
+        self.cleanup_gke_clusters()
+        self.cleanup_cloud_sql()
+        self.cleanup_cloud_functions()
+        self.cleanup_cloud_run()
+        self.cleanup_pubsub()
+        self.cleanup_firestore_indexes()
+        self.cleanup_storage_buckets()
+        self.cleanup_bigquery_datasets()
+        self.cleanup_vpc_networks()
+        
+        # Additional services
+        self.cleanup_spanner()
+        self.cleanup_composer()
+        self.cleanup_memorystore()
+        self.cleanup_logging()
+        self.cleanup_data_catalog()
+        self.cleanup_dataproc()
+        self.cleanup_dataproc_serverless()
+        self.cleanup_ai_platform()
+        self.cleanup_api_gateway()
+        self.cleanup_iot()
+        self.cleanup_filestore()
+        
+        # Print summary
+        self.print_summary()    def cleanup_filestore(self):
+        """Clean up Filestore instances"""
+        if not self._is_service_enabled("file.googleapis.com"):
+            logger.info("Filestore API is not enabled. Skipping Filestore cleanup.")
+            return
+            
+        # List all zones for Filestore instances
+        zone_cmd = "gcloud filestore instances list --format='value(zone)' | sort | uniq"
+        success, output, error = self._run_command(zone_cmd)
+        
+        if not success or not output:
+            logger.info("No Filestore zones found or unable to list zones")
+            return
+            
+        zones = output.strip().split('\n')
+        
+        for zone in zones:
+            zone = zone.strip()
+            if not zone:
+                continue
+                
+            instance_resources = self._list_resources(
+                f"Filestore instances in zone {zone}",
+                f"gcloud filestore instances list --filter='zone:{zone}' --format=json"
+            )
+            
+            # Add zone to resources for deletion
+            for resource in instance_resources:
+                resource['zone'] = zone
+                
+            self._delete_resources(
+                "Filestore Instance",
+                instance_resources,
+                "gcloud filestore instances delete {name} --zone={zone} --quiet"
+            )    def cleanup_iot(self):
         """Clean up IoT Core resources"""
         if not self._is_service_enabled("cloudiot.googleapis.com"):
             logger.info("IoT Core API is not enabled. Skipping IoT Core cleanup.")
@@ -217,43 +249,43 @@ if __name__ == "__main__":
                     "IoT Core Registry",
                     registry,
                     "gcloud iot registries delete {id} --region={region} --quiet"
-                )
-
-    def cleanup_filestore(self) -> None:
-        """Clean up Filestore instances"""
-        if not self._is_service_enabled("file.googleapis.com"):
-            logger.info("Filestore API is not enabled. Skipping Filestore cleanup.")
+                )    def cleanup_api_gateway(self):
+        """Clean up API Gateway resources"""
+        if not self._is_service_enabled("apigateway.googleapis.com"):
+            logger.info("API Gateway API is not enabled. Skipping API Gateway cleanup.")
             return
             
-        # List all zones for Filestore instances
-        zone_cmd = "gcloud filestore instances list --format='value(zone)' | sort | uniq"
-        success, output, error = self._run_command(zone_cmd)
+        # Clean up gateways
+        gateway_resources = self._list_resources(
+            "API Gateways",
+            "gcloud api-gateway gateways list --format=json"
+        )
         
-        if not success or not output:
-            logger.info("No Filestore zones found or unable to list zones")
-            return
-            
-        zones = output.strip().split('\n')
+        for resource in gateway_resources:
+            # Format may be projects/*/locations/*/gateways/*
+            if 'name' in resource:
+                parts = resource['name'].split('/')
+                if len(parts) >= 6:
+                    resource['location'] = parts[3]
+                    resource['gateway_id'] = parts[5]
         
-        for zone in zones:
-            zone = zone.strip()
-            if not zone:
-                continue
-                
-            instance_resources = self._list_resources(
-                f"Filestore instances in zone {zone}",
-                f"gcloud filestore instances list --filter='zone:{zone}' --format=json"
-            )
-            
-            # Add zone to resources for deletion
-            for resource in instance_resources:
-                resource['zone'] = zone
-                
-            self._delete_resources(
-                "Filestore Instance",
-                instance_resources,
-                "gcloud filestore instances delete {name} --zone={zone} --quiet"
-            )    def cleanup_ai_platform(self) -> None:
+        self._delete_resources(
+            "API Gateway",
+            gateway_resources,
+            "gcloud api-gateway gateways delete {gateway_id} --location={location} --quiet"
+        )
+        
+        # Clean up APIs
+        api_resources = self._list_resources(
+            "API Gateway APIs",
+            "gcloud api-gateway apis list --format=json"
+        )
+        
+        self._delete_resources(
+            "API Gateway API",
+            api_resources,
+            "gcloud api-gateway apis delete {name} --quiet"
+        )    def cleanup_ai_platform(self):
         """Clean up AI Platform resources (models, datasets, etc.)"""
         if not self._is_service_enabled("aiplatform.googleapis.com"):
             logger.info("AI Platform API is not enabled. Skipping AI Platform cleanup.")
@@ -311,45 +343,7 @@ if __name__ == "__main__":
                 "AI Platform Endpoint",
                 endpoint_resources,
                 "gcloud ai endpoints delete {name} --region={region} --quiet"
-            )
-
-    def cleanup_api_gateway(self) -> None:
-        """Clean up API Gateway resources"""
-        if not self._is_service_enabled("apigateway.googleapis.com"):
-            logger.info("API Gateway API is not enabled. Skipping API Gateway cleanup.")
-            return
-            
-        # Clean up gateways
-        gateway_resources = self._list_resources(
-            "API Gateways",
-            "gcloud api-gateway gateways list --format=json"
-        )
-        
-        for resource in gateway_resources:
-            # Format may be projects/*/locations/*/gateways/*
-            if 'name' in resource:
-                parts = resource['name'].split('/')
-                if len(parts) >= 6:
-                    resource['location'] = parts[3]
-                    resource['gateway_id'] = parts[5]
-        
-        self._delete_resources(
-            "API Gateway",
-            gateway_resources,
-            "gcloud api-gateway gateways delete {gateway_id} --location={location} --quiet"
-        )
-        
-        # Clean up APIs
-        api_resources = self._list_resources(
-            "API Gateway APIs",
-            "gcloud api-gateway apis list --format=json"
-        )
-        
-        self._delete_resources(
-            "API Gateway API",
-            api_resources,
-            "gcloud api-gateway apis delete {name} --quiet"
-        )#!/usr/bin/env python3
+            )#!/usr/bin/env python3
 import subprocess
 import json
 import logging
@@ -357,10 +351,8 @@ import argparse
 import sys
 import os
 import tempfile
-import getpass
 from datetime import datetime
 from tabulate import tabulate
-from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Any, Tuple, Optional
 
 # Configure logging
@@ -373,6 +365,7 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
 
 class GCPResourceCleaner:
     def __init__(self, project_id: str, dry_run: bool = False, max_workers: int = 5, auth_token: str = None):
@@ -649,7 +642,7 @@ class GCPResourceCleaner:
                 # Get confirmation for each resource
                 self._delete_resource(resource_type, resource, delete_command)
 
-    def cleanup_compute_instances(self) -> None:
+    def cleanup_compute_instances(self):
         """Clean up Compute Engine instances"""
         if not self._is_service_enabled("compute.googleapis.com"):
             logger.info("Compute Engine API is not enabled. Skipping compute instances cleanup.")
@@ -665,7 +658,7 @@ class GCPResourceCleaner:
             "gcloud compute instances delete {name} --zone={zone} --quiet"
         )
 
-    def cleanup_compute_disks(self) -> None:
+    def cleanup_compute_disks(self):
         """Clean up Compute Engine disks"""
         if not self._is_service_enabled("compute.googleapis.com"):
             logger.info("Compute Engine API is not enabled. Skipping compute disks cleanup.")
@@ -681,7 +674,7 @@ class GCPResourceCleaner:
             "gcloud compute disks delete {name} --zone={zone} --quiet"
         )
 
-    def cleanup_gke_clusters(self) -> None:
+    def cleanup_gke_clusters(self):
         """Clean up GKE clusters"""
         if not self._is_service_enabled("container.googleapis.com"):
             logger.info("GKE API is not enabled. Skipping GKE clusters cleanup.")
@@ -697,7 +690,7 @@ class GCPResourceCleaner:
             "gcloud container clusters delete {name} --zone={zone} --quiet"
         )
 
-    def cleanup_cloud_sql(self) -> None:
+    def cleanup_cloud_sql(self):
         """Clean up Cloud SQL instances"""
         if not self._is_service_enabled("sqladmin.googleapis.com"):
             logger.info("Cloud SQL Admin API is not enabled. Skipping Cloud SQL cleanup.")
@@ -713,7 +706,7 @@ class GCPResourceCleaner:
             "gcloud sql instances delete {name} --quiet"
         )
 
-    def cleanup_cloud_functions(self) -> None:
+    def cleanup_cloud_functions(self):
         """Clean up Cloud Functions"""
         if not self._is_service_enabled("cloudfunctions.googleapis.com"):
             logger.info("Cloud Functions API is not enabled. Skipping Cloud Functions cleanup.")
@@ -753,7 +746,7 @@ class GCPResourceCleaner:
         else:
             logger.info("No Cloud Functions found")
 
-    def cleanup_cloud_run(self) -> None:
+    def cleanup_cloud_run(self):
         """Clean up Cloud Run services"""
         if not self._is_service_enabled("run.googleapis.com"):
             logger.info("Cloud Run API is not enabled. Skipping Cloud Run cleanup.")
@@ -769,7 +762,7 @@ class GCPResourceCleaner:
             "gcloud run services delete {name} --region={region} --quiet"
         )
 
-    def cleanup_pubsub(self) -> None:
+    def cleanup_pubsub(self):
         """Clean up Pub/Sub topics"""
         if not self._is_service_enabled("pubsub.googleapis.com"):
             logger.info("Pub/Sub API is not enabled. Skipping Pub/Sub cleanup.")
@@ -791,7 +784,7 @@ class GCPResourceCleaner:
             "gcloud pubsub topics delete {short_name} --quiet"
         )
 
-    def cleanup_firestore_indexes(self) -> None:
+    def cleanup_firestore_indexes(self):
         """Clean up Firestore indexes"""
         if not self._is_service_enabled("firestore.googleapis.com"):
             logger.info("Firestore API is not enabled. Skipping Firestore indexes cleanup.")
@@ -807,7 +800,7 @@ class GCPResourceCleaner:
             "gcloud firestore indexes composite delete {name} --quiet"
         )
 
-    def cleanup_storage_buckets(self) -> None:
+    def cleanup_storage_buckets(self):
         """Clean up Storage buckets"""
         if not self._is_service_enabled("storage.googleapis.com"):
             logger.info("Storage API is not enabled. Skipping Storage buckets cleanup.")
@@ -830,7 +823,7 @@ class GCPResourceCleaner:
             "gsutil -m rm -r {name}"
         )
 
-    def cleanup_bigquery_datasets(self) -> None:
+    def cleanup_bigquery_datasets(self):
         """Clean up BigQuery datasets"""
         if not self._is_service_enabled("bigquery.googleapis.com"):
             logger.info("BigQuery API is not enabled. Skipping BigQuery datasets cleanup.")
@@ -846,7 +839,7 @@ class GCPResourceCleaner:
             "bq rm -r -f {project}:{name}"
         )
 
-    def cleanup_vpc_networks(self) -> None:
+    def cleanup_vpc_networks(self):
         """Clean up VPC networks (excluding default)"""
         if not self._is_service_enabled("compute.googleapis.com"):
             logger.info("Compute Engine API is not enabled. Skipping VPC networks cleanup.")
@@ -862,7 +855,7 @@ class GCPResourceCleaner:
             "gcloud compute networks delete {name} --quiet"
         )
 
-    def cleanup_spanner(self) -> None:
+    def cleanup_spanner(self):
         """Clean up Spanner instances and databases"""
         if not self._is_service_enabled("spanner.googleapis.com"):
             logger.info("Spanner API is not enabled. Skipping Spanner cleanup.")
@@ -912,7 +905,7 @@ class GCPResourceCleaner:
                 "gcloud spanner instances delete {name} --quiet"
             )
 
-    def cleanup_composer(self) -> None:
+    def cleanup_composer(self):
         """Clean up Cloud Composer environments"""
         if not self._is_service_enabled("composer.googleapis.com"):
             logger.info("Cloud Composer API is not enabled. Skipping Composer cleanup.")
@@ -937,7 +930,7 @@ class GCPResourceCleaner:
             "gcloud composer environments delete {env_name} --location={location} --quiet"
         )
 
-    def cleanup_memorystore(self) -> None:
+    def cleanup_memorystore(self):
         """Clean up Memorystore instances (Redis and Memcached)"""
         # Check for Redis API
         redis_enabled = self._is_service_enabled("redis.googleapis.com")
@@ -989,7 +982,7 @@ class GCPResourceCleaner:
                 "gcloud memcache instances delete {instance_id} --region={location} --quiet"
             )
 
-    def cleanup_logging(self) -> None:
+    def cleanup_logging(self):
         """Clean up Log Buckets and Log Sinks"""
         if not self._is_service_enabled("logging.googleapis.com"):
             logger.info("Logging API is not enabled. Skipping Logging cleanup.")
@@ -1038,7 +1031,7 @@ class GCPResourceCleaner:
             "gcloud logging buckets delete {bucket_id} --location={location} --quiet"
         )
 
-    def cleanup_data_catalog(self) -> None:
+    def cleanup_data_catalog(self):
         """Clean up Data Catalog entries and tag templates"""
         if not self._is_service_enabled("datacatalog.googleapis.com"):
             logger.info("Data Catalog API is not enabled. Skipping Data Catalog cleanup.")
@@ -1085,7 +1078,7 @@ class GCPResourceCleaner:
             "gcloud data-catalog tag-templates delete {template_id} --location={location} --force --quiet"
         )
 
-    def cleanup_dataproc(self) -> None:
+    def cleanup_dataproc(self):
         """Clean up Dataproc clusters"""
         if not self._is_service_enabled("dataproc.googleapis.com"):
             logger.info("Dataproc API is not enabled. Skipping Dataproc cleanup.")
@@ -1125,7 +1118,7 @@ class GCPResourceCleaner:
                 "gcloud dataproc clusters delete {name} --region={region} --quiet"
             )
             
-    def cleanup_dataproc_serverless(self) -> None:
+    def cleanup_dataproc_serverless(self):
         """Clean up Dataproc Serverless batches and sessions"""
         if not self._is_service_enabled("dataproc.googleapis.com"):
             logger.info("Dataproc API is not enabled. Skipping Dataproc Serverless cleanup.")
