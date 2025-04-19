@@ -1,30 +1,13 @@
-## Per-Resource Deletion Control
-
-One of the key features of this utility is granular control over resource deletion:
-
-### During Cleanup
-For each resource, you'll be prompted with:
-```
-Ready to delete: Compute Instance/instance-name (zone: us-central1-a)
-Delete this resource? (yes/no/all/quit):
-```
-
-Your options are:
-- **yes**: Delete only this specific resource
-- **no**: Skip this resource (it will be preserved)
-- **all**: Delete this resource and all remaining resources without further prompts
-- **quit**: Immediately stop the deletion process
-
-This prevents accidental deletion of critical resources while allowing for efficient bulk cleanup when appropriate.# GCP Resource Cleanup Utility
+# GCP Resource Cleanup Utility
 
 A comprehensive Python utility for cleaning up resources in Google Cloud Platform projects. This script helps you safely delete multiple resource types across your GCP project, with built-in safeguards, detailed logging, and interactive confirmation for each resource.
 
 ## Features
 
-- **Interactive Interface**: Guided process with clear prompts and per-resource confirmation
-- **Multiple Authentication Methods**: Support for both GCP Access Tokens and Service Account Tokens
-- **Granular Control**: Approve or skip deletion of each individual resource
+- **Environment Variable Authentication**: Automatically uses GCP access token from `GCP_AUTH_TOKEN` environment variable
+- **Interactive Resource Control**: Approve or skip deletion of each individual resource
 - **Batch Approval Option**: Option to approve all remaining deletions at once
+- **Command-line Project Override**: Specify project ID via command line or interactive prompt
 - **Comprehensive Resource Cleanup**: Handles multiple GCP resource types
 - **Dry Run Mode**: Preview what would be deleted without making any changes
 - **Enhanced Logging**: Detailed logs for tracking operations
@@ -51,6 +34,7 @@ The script can identify and delete the following GCP resource types:
 - Python 3.6+
 - `tabulate` package (for formatted output)
 - Google Cloud SDK (`gcloud` command-line tool)
+- A valid GCP access token stored in the `GCP_AUTH_TOKEN` environment variable
 - Appropriate GCP permissions to list and delete resources
 
 ## Installation
@@ -63,6 +47,12 @@ pip install tabulate
 ```
 
 3. Ensure Google Cloud SDK is installed and available in your PATH
+4. Set up your GCP authentication token:
+
+```bash
+# Set your GCP authentication token
+export GCP_AUTH_TOKEN="your_access_token_here"
+```
 
 ## Usage
 
@@ -75,6 +65,9 @@ python gcp_cleanup.py
 ### Additional Options
 
 ```bash
+# Specify project ID directly
+python gcp_cleanup.py --project-id=your-project-id
+
 # Dry run mode (list resources without deleting)
 python gcp_cleanup.py --dry-run
 
@@ -83,12 +76,16 @@ python gcp_cleanup.py --workers 10
 
 # Enable verbose logging
 python gcp_cleanup.py --verbose
+
+# Combine options
+python gcp_cleanup.py --project-id=your-project-id --dry-run --verbose
 ```
 
 ### Command-line Arguments
 
 | Argument | Short | Description |
 |----------|-------|-------------|
+| `--project-id` | `-p` | GCP Project ID (optional, will prompt if not provided) |
 | `--dry-run` | `-d` | List resources without deleting them |
 | `--workers` | `-w` | Number of concurrent deletion operations (default: 5) |
 | `--verbose` | `-v` | Enable detailed logging |
@@ -97,8 +94,8 @@ python gcp_cleanup.py --verbose
 
 When you run the script, it will guide you through the following steps:
 
-1. **Project Selection**: Enter your GCP Project ID
-2. **Authentication**: Choose between Access Token or Service Account authentication
+1. **Project Selection**: Enter your GCP Project ID (if not provided via command line)
+2. **Authentication Verification**: The script checks for the `GCP_AUTH_TOKEN` environment variable
 3. **Resource Preview**: See a list of resource types that will be affected
 4. **Initial Confirmation**: Confirm that you want to proceed with the resource scan
 5. **Per-Resource Confirmation**: For each resource, choose whether to:
@@ -108,26 +105,32 @@ When you run the script, it will guide you through the following steps:
    - `quit` - Stop the deletion process immediately
 6. **Summary**: View a tabular report of deleted, skipped, and failed resources
 
-## Authentication Methods
+## Authentication
 
-The script supports two authentication methods:
+The script uses only the GCP access token stored in the `GCP_AUTH_TOKEN` environment variable:
 
-1. **GCP Access Token** (Preferred)
-   - Temporary token with limited scope
-   - Typically used for short-lived operations
-   - Less privileged and safer
+- If the environment variable is not set, the script will exit with an error message
+- The script will attempt to authenticate using the token, and exit immediately if authentication fails
+- No service account authentication or other methods are supported
 
-2. **Service Account Token**
-   - JSON key for a service account
-   - Typically has broader permissions
-   - Used for automated processes
+## Per-Resource Deletion Control
 
-## Security Considerations
+One of the key features of this utility is granular control over resource deletion:
 
-- Authentication tokens are handled securely and not stored permanently
-- Temporary files are created only when necessary and cleaned up after use
-- Passwords/tokens are masked during input
-- The script requires explicit confirmation before performing deletions
+### During Cleanup
+For each resource, you'll be prompted with:
+```
+Ready to delete: Compute Instance/instance-name (zone: us-central1-a)
+Delete this resource? (yes/no/all/quit):
+```
+
+Your options are:
+- **yes**: Delete only this specific resource
+- **no**: Skip this resource (it will be preserved)
+- **all**: Delete this resource and all remaining resources without further prompts
+- **quit**: Immediately stop the deletion process
+
+This prevents accidental deletion of critical resources while allowing for efficient bulk cleanup when appropriate.
 
 ## Output Format
 
@@ -181,16 +184,17 @@ gcp_cleanup_20250418_123045.log
 
 The script handles various error scenarios:
 
+- Missing environment variables
+- Authentication failures
 - Missing permissions
 - Resource dependencies
 - API rate limits
-- Authentication failures
 - Network issues
 
 ## Best Practices
 
 - Always run with `--dry-run` first to see what would be deleted
-- Use the least privileged token necessary for the operation
+- Ensure your access token has the minimum required permissions
 - Consider backing up critical data before running the script
 - Use the per-resource confirmation to selectively clean up your project
 - Use the "all" option only after reviewing the initial resources
@@ -201,6 +205,7 @@ The script handles various error scenarios:
 - Cannot restore deleted resources (deletions are permanent)
 - Some resources may have dependencies that prevent deletion
 - Certain managed services may have additional protection mechanisms
+- Only supports access token authentication via environment variable
 
 ## License
 
