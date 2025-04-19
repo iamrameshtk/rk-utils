@@ -1,349 +1,4 @@
-def main():
-    """Main function"""
-    parser = argparse.ArgumentParser(description="Clean up resources in a GCP project")
-    parser.add_argument("--project-id", "-p", help="GCP Project ID (optional, will prompt if not provided)")
-    parser.add_argument("--dry-run", "-d", action="store_true", help="Dry run mode (list only, no deletion)")
-    parser.add_argument("--workers", "-w", type=int, default=5, help="Maximum number of concurrent deletions")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
-    
-    args = parser.parse_args()
-    
-    if args.verbose:
-        logger.setLevel(logging.DEBUG)
-    
-    print("="*80)
-    print("GCP RESOURCE CLEANUP UTILITY")
-    print("="*80)
-    print("\nThis script will delete resources in a specified GCP project.")
-    
-    # Get project ID from command line or prompt
-    project_id = args.project_id
-    if not project_id:
-        project_id = input("\nEnter GCP Project ID: ").strip()
-        while not project_id:
-            print("Project ID cannot be empty.")
-            project_id = input("Enter GCP Project ID: ").strip()
-    
-    # Check for GCP_AUTH_TOKEN environment variable
-    auth_token = os.environ.get('GCP_AUTH_TOKEN')
-    if not auth_token:
-        print("\n⚠️  Environment variable GCP_AUTH_TOKEN not found.")
-        print("Please set the GCP_AUTH_TOKEN environment variable with your access token.")
-        print("Example: export GCP_AUTH_TOKEN=your_access_token")
-        sys.exit(1)
-    else:
-        logger.info("Found GCP_AUTH_TOKEN environment variable")
-    
-    # Display information about what will be done
-    print("\n" + "="*80)
-    print(f"READY TO CLEAN UP PROJECT: {project_id}")
-    print("="*80)
-    print("\nThis will scan for and delete the following resource types:")
-    print("- Compute Engine instances and disks")
-    print("- GKE clusters")
-    print("- Cloud SQL instances")
-    print("- Cloud Functions")
-    print("- Cloud Run services")
-    print("- Pub/Sub topics")
-    print("- Firestore indexes")
-    print("- Storage buckets")
-    print("- BigQuery datasets")
-    print("- VPC networks (excluding default)")
-    print("- Spanner instances and databases")
-    print("- Cloud Composer environments")
-    print("- Memorystore instances (Redis and Memcached)")
-    print("- Log Buckets and Log Sinks")
-    print("- Data Catalog entries and tag templates")
-    print("- Dataproc clusters")
-    print("- Dataproc Serverless batches and sessions")
-    print("- AI Platform resources (models, datasets, endpoints)")
-    print("- API Gateway resources")
-    print("- IoT Core registries and devices")
-    print("- Filestore instances")
-    
-    if args.dry_run:
-        print("\n⚠️  DRY RUN MODE: Resources will only be listed, not deleted.")
-    else:
-        print("\n⚠️  WARNING: THIS OPERATION WILL DELETE RESOURCES! IT CANNOT BE UNDONE!")
-    
-    # Get confirmation
-    confirm = input("\nAre you sure you want to proceed? (yes/no): ").strip().lower()
-    
-    if confirm != "yes":
-        print("Operation cancelled by user.")
-        return
-    
-    try:
-        cleaner = GCPResourceCleaner(
-            project_id=project_id,
-            dry_run=args.dry_run,
-            max_workers=args.workers,
-            auth_token=auth_token
-        )
-        cleaner.run_cleanup()
-    except KeyboardInterrupt:
-        logger.warning("Operation interrupted by user")
-        sys.exit(1)
-    except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()    def print_summary(self):
-        """Print a summary of the cleanup operation"""
-        print("\n" + "="*80)
-        print(f"GCP RESOURCE CLEANUP SUMMARY FOR PROJECT: {self.project_id}")
-        print("="*80)
-        
-        # Successful deletions
-        if self.deleted_resources:
-            print("\nSUCCESSFULLY DELETED RESOURCES:")
-            table_data = []
-            for resource_type, name, status in self.deleted_resources:
-                table_data.append([resource_type, name, "✅ " + status])
-            print(tabulate(table_data, headers=["Resource Type", "Name", "Status"], tablefmt="grid"))
-        else:
-            print("\nNo resources were deleted.")
-            
-        # Skipped resources
-        if self.skipped_resources:
-            print("\nSKIPPED RESOURCES:")
-            table_data = []
-            for resource_type, name, reason in self.skipped_resources:
-                table_data.append([resource_type, name, "⏭️ " + reason])
-            print(tabulate(table_data, headers=["Resource Type", "Name", "Reason"], tablefmt="grid"))
-            
-        # Failed deletions
-        if self.failed_resources:
-            print("\nFAILED DELETIONS:")
-            table_data = []
-            for resource_type, name, error in self.failed_resources:
-                error_msg = (error[:47] + '...') if len(error) > 50 else error
-                table_data.append([resource_type, name, "❌ " + error_msg])
-            print(tabulate(table_data, headers=["Resource Type", "Name", "Error"], tablefmt="grid"))
-            
-        # Missing permissions
-        if self.missing_permissions:
-            print("\nMISSING PERMISSIONS:")
-            for resource_type in self.missing_permissions:
-                print(f"⚠️  {resource_type}")
-                
-        print("\nSUMMARY STATISTICS:")
-        print(f"Total resources deleted: {len(self.deleted_resources)}")
-        print(f"Total resources skipped: {len(self.skipped_resources)}")
-        print(f"Total failed deletions: {len(self.failed_resources)}")
-        print(f"Resource types with missing permissions: {len(self.missing_permissions)}")
-        
-        if self.dry_run:
-            print("\n⚠️  THIS WAS A DRY RUN. NO ACTUAL DELETIONS WERE PERFORMED.")
-            
-        print("="*80)
-        
-        # Clean up temporary files
-        self._cleanup_temp_files()    def run_cleanup(self):
-        """Run the full cleanup process"""
-        logger.info(f"Starting resource cleanup for project: {self.project_id}")
-        
-        # Call all cleanup methods
-        self.cleanup_compute_instances()
-        self.cleanup_compute_disks()
-        self.cleanup_gke_clusters()
-        self.cleanup_cloud_sql()
-        self.cleanup_cloud_functions()
-        self.cleanup_cloud_run()
-        self.cleanup_pubsub()
-        self.cleanup_firestore_indexes()
-        self.cleanup_storage_buckets()
-        self.cleanup_bigquery_datasets()
-        self.cleanup_vpc_networks()
-        
-        # Additional services
-        self.cleanup_spanner()
-        self.cleanup_composer()
-        self.cleanup_memorystore()
-        self.cleanup_logging()
-        self.cleanup_data_catalog()
-        self.cleanup_dataproc()
-        self.cleanup_dataproc_serverless()
-        self.cleanup_ai_platform()
-        self.cleanup_api_gateway()
-        self.cleanup_iot()
-        self.cleanup_filestore()
-        
-        # Print summary
-        self.print_summary()    def cleanup_filestore(self):
-        """Clean up Filestore instances"""
-        if not self._is_service_enabled("file.googleapis.com"):
-            logger.info("Filestore API is not enabled. Skipping Filestore cleanup.")
-            return
-            
-        # List all zones for Filestore instances
-        zone_cmd = "gcloud filestore instances list --format='value(zone)' | sort | uniq"
-        success, output, error = self._run_command(zone_cmd)
-        
-        if not success or not output:
-            logger.info("No Filestore zones found or unable to list zones")
-            return
-            
-        zones = output.strip().split('\n')
-        
-        for zone in zones:
-            zone = zone.strip()
-            if not zone:
-                continue
-                
-            instance_resources = self._list_resources(
-                f"Filestore instances in zone {zone}",
-                f"gcloud filestore instances list --filter='zone:{zone}' --format=json"
-            )
-            
-            # Add zone to resources for deletion
-            for resource in instance_resources:
-                resource['zone'] = zone
-                
-            self._delete_resources(
-                "Filestore Instance",
-                instance_resources,
-                "gcloud filestore instances delete {name} --zone={zone} --quiet"
-            )    def cleanup_iot(self):
-        """Clean up IoT Core resources"""
-        if not self._is_service_enabled("cloudiot.googleapis.com"):
-            logger.info("IoT Core API is not enabled. Skipping IoT Core cleanup.")
-            return
-            
-        # Get regions where IoT Core is available
-        regions = ['us-central1', 'europe-west1', 'asia-east1']
-        
-        for region in regions:
-            # List registries first
-            registry_resources = self._list_resources(
-                f"IoT Core registries in {region}",
-                f"gcloud iot registries list --region={region} --format=json"
-            )
-            
-            for registry in registry_resources:
-                registry_id = registry.get('id')
-                if not registry_id:
-                    continue
-                
-                # For each registry, list and delete devices first
-                device_resources = self._list_resources(
-                    f"IoT Core devices in registry {registry_id}",
-                    f"gcloud iot devices list --registry={registry_id} --region={region} --format=json"
-                )
-                
-                # Add registry and region to device resources for deletion
-                for device in device_resources:
-                    device['registry'] = registry_id
-                    device['region'] = region
-                
-                self._delete_resources(
-                    "IoT Core Device",
-                    device_resources,
-                    "gcloud iot devices delete {id} --registry={registry} --region={region} --quiet"
-                )
-                
-                # Then delete the registry
-                registry['region'] = region
-                self._delete_resource(
-                    "IoT Core Registry",
-                    registry,
-                    "gcloud iot registries delete {id} --region={region} --quiet"
-                )    def cleanup_api_gateway(self):
-        """Clean up API Gateway resources"""
-        if not self._is_service_enabled("apigateway.googleapis.com"):
-            logger.info("API Gateway API is not enabled. Skipping API Gateway cleanup.")
-            return
-            
-        # Clean up gateways
-        gateway_resources = self._list_resources(
-            "API Gateways",
-            "gcloud api-gateway gateways list --format=json"
-        )
-        
-        for resource in gateway_resources:
-            # Format may be projects/*/locations/*/gateways/*
-            if 'name' in resource:
-                parts = resource['name'].split('/')
-                if len(parts) >= 6:
-                    resource['location'] = parts[3]
-                    resource['gateway_id'] = parts[5]
-        
-        self._delete_resources(
-            "API Gateway",
-            gateway_resources,
-            "gcloud api-gateway gateways delete {gateway_id} --location={location} --quiet"
-        )
-        
-        # Clean up APIs
-        api_resources = self._list_resources(
-            "API Gateway APIs",
-            "gcloud api-gateway apis list --format=json"
-        )
-        
-        self._delete_resources(
-            "API Gateway API",
-            api_resources,
-            "gcloud api-gateway apis delete {name} --quiet"
-        )    def cleanup_ai_platform(self):
-        """Clean up AI Platform resources (models, datasets, etc.)"""
-        if not self._is_service_enabled("aiplatform.googleapis.com"):
-            logger.info("AI Platform API is not enabled. Skipping AI Platform cleanup.")
-            return
-            
-        # Get regions where AI Platform is available
-        regions = ['us-central1', 'europe-west4', 'asia-east1', 'global']
-        
-        for region in regions:
-            logger.info(f"Checking for AI Platform resources in {region}")
-            
-            # Clean up models
-            model_resources = self._list_resources(
-                f"AI Platform models in {region}",
-                f"gcloud ai models list --region={region} --format=json"
-            )
-            
-            # Add region to resources for deletion
-            for resource in model_resources:
-                resource['region'] = region
-                
-            self._delete_resources(
-                "AI Platform Model",
-                model_resources,
-                "gcloud ai models delete {name} --region={region} --quiet"
-            )
-            
-            # Clean up datasets
-            dataset_resources = self._list_resources(
-                f"AI Platform datasets in {region}",
-                f"gcloud ai datasets list --region={region} --format=json"
-            )
-            
-            # Add region to resources for deletion
-            for resource in dataset_resources:
-                resource['region'] = region
-                
-            self._delete_resources(
-                "AI Platform Dataset",
-                dataset_resources,
-                "gcloud ai datasets delete {name} --region={region} --quiet"
-            )
-            
-            # Clean up endpoints
-            endpoint_resources = self._list_resources(
-                f"AI Platform endpoints in {region}",
-                f"gcloud ai endpoints list --region={region} --format=json"
-            )
-            
-            # Add region to resources for deletion
-            for resource in endpoint_resources:
-                resource['region'] = region
-                
-            self._delete_resources(
-                "AI Platform Endpoint",
-                endpoint_resources,
-                "gcloud ai endpoints delete {name} --region={region} --quiet"
-            )#!/usr/bin/env python3
+#!/usr/bin/env python3
 import subprocess
 import json
 import logging
@@ -354,6 +9,7 @@ import tempfile
 from datetime import datetime
 from tabulate import tabulate
 from typing import List, Dict, Any, Tuple, Optional
+from concurrent.futures import ThreadPoolExecutor
 
 # Configure logging
 logging.basicConfig(
@@ -448,6 +104,187 @@ class GCPResourceCleaner:
                 stderr=subprocess.PIPE,
                 text=True
             )
+
+    def print_summary(self):
+        """Print a summary of the cleanup operation"""
+        print("\n" + "="*80)
+        print(f"GCP RESOURCE CLEANUP SUMMARY FOR PROJECT: {self.project_id}")
+        print("="*80)
+        
+        # Successful deletions
+        if self.deleted_resources:
+            print("\nSUCCESSFULLY DELETED RESOURCES:")
+            table_data = []
+            for resource_type, name, status in self.deleted_resources:
+                table_data.append([resource_type, name, "✅ " + status])
+            print(tabulate(table_data, headers=["Resource Type", "Name", "Status"], tablefmt="grid"))
+        else:
+            print("\nNo resources were deleted.")
+            
+        # Skipped resources
+        if self.skipped_resources:
+            print("\nSKIPPED RESOURCES:")
+            table_data = []
+            for resource_type, name, reason in self.skipped_resources:
+                table_data.append([resource_type, name, "⏭️ " + reason])
+            print(tabulate(table_data, headers=["Resource Type", "Name", "Reason"], tablefmt="grid"))
+            
+        # Failed deletions
+        if self.failed_resources:
+            print("\nFAILED DELETIONS:")
+            table_data = []
+            for resource_type, name, error in self.failed_resources:
+                error_msg = (error[:47] + '...') if len(error) > 50 else error
+                table_data.append([resource_type, name, "❌ " + error_msg])
+            print(tabulate(table_data, headers=["Resource Type", "Name", "Error"], tablefmt="grid"))
+            
+        # Missing permissions
+        if self.missing_permissions:
+            print("\nMISSING PERMISSIONS:")
+            for resource_type in self.missing_permissions:
+                print(f"⚠️  {resource_type}")
+                
+        print("\nSUMMARY STATISTICS:")
+        print(f"Total resources deleted: {len(self.deleted_resources)}")
+        print(f"Total resources skipped: {len(self.skipped_resources)}")
+        print(f"Total failed deletions: {len(self.failed_resources)}")
+        print(f"Resource types with missing permissions: {len(self.missing_permissions)}")
+        
+        if self.dry_run:
+            print("\n⚠️  THIS WAS A DRY RUN. NO ACTUAL DELETIONS WERE PERFORMED.")
+            
+        print("="*80)
+        
+        # Clean up temporary files
+        self._cleanup_temp_files()
+
+    def run_cleanup(self):
+        """Run the full cleanup process"""
+        logger.info(f"Starting resource cleanup for project: {self.project_id}")
+        
+        # Call all cleanup methods
+        self.cleanup_compute_instances()
+        self.cleanup_compute_disks()
+        self.cleanup_gke_clusters()
+        self.cleanup_cloud_sql()
+        self.cleanup_cloud_functions()
+        self.cleanup_cloud_run()
+        self.cleanup_pubsub()
+        self.cleanup_firestore_indexes()
+        self.cleanup_storage_buckets()
+        self.cleanup_bigquery_datasets()
+        self.cleanup_vpc_networks()
+        
+        # Additional services
+        self.cleanup_spanner()
+        self.cleanup_composer()
+        self.cleanup_memorystore()
+        self.cleanup_logging()
+        self.cleanup_data_catalog()
+        self.cleanup_dataproc()
+        self.cleanup_dataproc_serverless()
+        self.cleanup_ai_platform()
+        self.cleanup_api_gateway()
+        self.cleanup_iot()
+        self.cleanup_filestore()
+        
+        # Print summary
+        self.print_summary()
+
+
+def main():
+    """Main function"""
+    parser = argparse.ArgumentParser(description="Clean up resources in a GCP project")
+    parser.add_argument("--project-id", "-p", help="GCP Project ID (optional, will prompt if not provided)")
+    parser.add_argument("--dry-run", "-d", action="store_true", help="Dry run mode (list only, no deletion)")
+    parser.add_argument("--workers", "-w", type=int, default=5, help="Maximum number of concurrent deletions")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
+    
+    args = parser.parse_args()
+    
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
+    
+    print("="*80)
+    print("GCP RESOURCE CLEANUP UTILITY")
+    print("="*80)
+    print("\nThis script will delete resources in a specified GCP project.")
+    
+    # Get project ID from command line or prompt
+    project_id = args.project_id
+    if not project_id:
+        project_id = input("\nEnter GCP Project ID: ").strip()
+        while not project_id:
+            print("Project ID cannot be empty.")
+            project_id = input("Enter GCP Project ID: ").strip()
+    
+    # Check for GCP_AUTH_TOKEN environment variable
+    auth_token = os.environ.get('GCP_AUTH_TOKEN')
+    if not auth_token:
+        print("\n⚠️  Environment variable GCP_AUTH_TOKEN not found.")
+        print("Please set the GCP_AUTH_TOKEN environment variable with your access token.")
+        print("Example: export GCP_AUTH_TOKEN=your_access_token")
+        sys.exit(1)
+    else:
+        logger.info("Found GCP_AUTH_TOKEN environment variable")
+    
+    # Display information about what will be done
+    print("\n" + "="*80)
+    print(f"READY TO CLEAN UP PROJECT: {project_id}")
+    print("="*80)
+    print("\nThis will scan for and delete the following resource types:")
+    print("- Compute Engine instances and disks")
+    print("- GKE clusters")
+    print("- Cloud SQL instances")
+    print("- Cloud Functions")
+    print("- Cloud Run services")
+    print("- Pub/Sub topics")
+    print("- Firestore indexes")
+    print("- Storage buckets")
+    print("- BigQuery datasets")
+    print("- VPC networks (excluding default)")
+    print("- Spanner instances and databases")
+    print("- Cloud Composer environments")
+    print("- Memorystore instances (Redis and Memcached)")
+    print("- Log Buckets and Log Sinks")
+    print("- Data Catalog entries and tag templates")
+    print("- Dataproc clusters")
+    print("- Dataproc Serverless batches and sessions")
+    print("- AI Platform resources (models, datasets, endpoints)")
+    print("- API Gateway resources")
+    print("- IoT Core registries and devices")
+    print("- Filestore instances")
+    
+    if args.dry_run:
+        print("\n⚠️  DRY RUN MODE: Resources will only be listed, not deleted.")
+    else:
+        print("\n⚠️  WARNING: THIS OPERATION WILL DELETE RESOURCES! IT CANNOT BE UNDONE!")
+    
+    # Get confirmation
+    confirm = input("\nAre you sure you want to proceed? (yes/no): ").strip().lower()
+    
+    if confirm != "yes":
+        print("Operation cancelled by user.")
+        return
+    
+    try:
+        cleaner = GCPResourceCleaner(
+            project_id=project_id,
+            dry_run=args.dry_run,
+            max_workers=args.workers,
+            auth_token=auth_token
+        )
+        cleaner.run_cleanup()
+    except KeyboardInterrupt:
+        logger.warning("Operation interrupted by user")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
             return (result.returncode == 0, result.stdout.strip(), result.stderr.strip())
         except Exception as e:
             logger.error(f"Command execution error: {str(e)}")
@@ -592,21 +429,22 @@ class GCPResourceCleaner:
             return True
             
         # Get interactive approval for this specific resource
-        print(f"\nReady to delete: {resource_identifier}")
-        confirm = input("Delete this resource? (yes/no/all/quit): ").strip().lower()
-        
-        if confirm == "quit":
-            logger.info("User chose to quit. Stopping deletion process.")
-            print("\nDeletion process stopped by user.")
-            sys.exit(0)
-        elif confirm == "all":
-            # Set a flag to skip future confirmations
-            self.skip_confirmation = True
-            logger.info("User chose to delete all resources without further confirmation.")
-        elif confirm != "yes":
-            logger.info(f"User skipped deletion of {resource_identifier}")
-            self.skipped_resources.append((resource_type, resource_name, "user-skipped"))
-            return False
+        if not hasattr(self, 'skip_confirmation') or not self.skip_confirmation:
+            print(f"\nReady to delete: {resource_identifier}")
+            confirm = input("Delete this resource? (yes/no/all/quit): ").strip().lower()
+            
+            if confirm == "quit":
+                logger.info("User chose to quit. Stopping deletion process.")
+                print("\nDeletion process stopped by user.")
+                sys.exit(0)
+            elif confirm == "all":
+                # Set a flag to skip future confirmations
+                self.skip_confirmation = True
+                logger.info("User chose to delete all resources without further confirmation.")
+            elif confirm != "yes":
+                logger.info(f"User skipped deletion of {resource_identifier}")
+                self.skipped_resources.append((resource_type, resource_name, "user-skipped"))
+                return False
             
         logger.info(f"Deleting {resource_identifier}...")
         success, output, error = self._run_command(formatted_command)
@@ -635,12 +473,7 @@ class GCPResourceCleaner:
         # Since we need interactive confirmation, we can't use ThreadPoolExecutor here
         # Instead, process resources sequentially
         for resource in resources:
-            if hasattr(self, 'skip_confirmation') and self.skip_confirmation:
-                # User has chosen to delete all without confirmation
-                self._delete_resource(resource_type, resource, delete_command)
-            else:
-                # Get confirmation for each resource
-                self._delete_resource(resource_type, resource, delete_command)
+            self._delete_resource(resource_type, resource, delete_command)
 
     def cleanup_compute_instances(self):
         """Clean up Compute Engine instances"""
@@ -808,7 +641,7 @@ class GCPResourceCleaner:
             
         resources = self._list_resources(
             "Storage buckets",
-            "gsutil ls -p {project} | grep 'gs://'".format(project=self.project_id),
+            f"gsutil ls -p {self.project_id} | grep 'gs://'",
             format_type='table'
         )
         
@@ -831,12 +664,12 @@ class GCPResourceCleaner:
             
         resources = self._list_resources(
             "BigQuery datasets",
-            "bq ls --format=json --project_id={project}".format(project=self.project_id)
+            f"bq ls --format=json --project_id={self.project_id}"
         )
         self._delete_resources(
             "BigQuery Dataset", 
             resources,
-            "bq rm -r -f {project}:{name}"
+            f"bq rm -r -f {self.project_id}:{{name}}"
         )
 
     def cleanup_vpc_networks(self):
@@ -1171,4 +1004,184 @@ class GCPResourceCleaner:
                 "Dataproc Serverless Session",
                 session_resources,
                 "gcloud dataproc sessions delete {name} --region={region} --quiet"
+            )
+
+    def cleanup_ai_platform(self):
+        """Clean up AI Platform resources (models, datasets, etc.)"""
+        if not self._is_service_enabled("aiplatform.googleapis.com"):
+            logger.info("AI Platform API is not enabled. Skipping AI Platform cleanup.")
+            return
+            
+        # Get regions where AI Platform is available
+        regions = ['us-central1', 'europe-west4', 'asia-east1', 'global']
+        
+        for region in regions:
+            logger.info(f"Checking for AI Platform resources in {region}")
+            
+            # Clean up models
+            model_resources = self._list_resources(
+                f"AI Platform models in {region}",
+                f"gcloud ai models list --region={region} --format=json"
+            )
+            
+            # Add region to resources for deletion
+            for resource in model_resources:
+                resource['region'] = region
+                
+            self._delete_resources(
+                "AI Platform Model",
+                model_resources,
+                "gcloud ai models delete {name} --region={region} --quiet"
+            )
+            
+            # Clean up datasets
+            dataset_resources = self._list_resources(
+                f"AI Platform datasets in {region}",
+                f"gcloud ai datasets list --region={region} --format=json"
+            )
+            
+            # Add region to resources for deletion
+            for resource in dataset_resources:
+                resource['region'] = region
+                
+            self._delete_resources(
+                "AI Platform Dataset",
+                dataset_resources,
+                "gcloud ai datasets delete {name} --region={region} --quiet"
+            )
+            
+            # Clean up endpoints
+            endpoint_resources = self._list_resources(
+                f"AI Platform endpoints in {region}",
+                f"gcloud ai endpoints list --region={region} --format=json"
+            )
+            
+            # Add region to resources for deletion
+            for resource in endpoint_resources:
+                resource['region'] = region
+                
+            self._delete_resources(
+                "AI Platform Endpoint",
+                endpoint_resources,
+                "gcloud ai endpoints delete {name} --region={region} --quiet"
+            )
+
+    def cleanup_api_gateway(self):
+        """Clean up API Gateway resources"""
+        if not self._is_service_enabled("apigateway.googleapis.com"):
+            logger.info("API Gateway API is not enabled. Skipping API Gateway cleanup.")
+            return
+            
+        # Clean up gateways
+        gateway_resources = self._list_resources(
+            "API Gateways",
+            "gcloud api-gateway gateways list --format=json"
+        )
+        
+        for resource in gateway_resources:
+            # Format may be projects/*/locations/*/gateways/*
+            if 'name' in resource:
+                parts = resource['name'].split('/')
+                if len(parts) >= 6:
+                    resource['location'] = parts[3]
+                    resource['gateway_id'] = parts[5]
+        
+        self._delete_resources(
+            "API Gateway",
+            gateway_resources,
+            "gcloud api-gateway gateways delete {gateway_id} --location={location} --quiet"
+        )
+        
+        # Clean up APIs
+        api_resources = self._list_resources(
+            "API Gateway APIs",
+            "gcloud api-gateway apis list --format=json"
+        )
+        
+        self._delete_resources(
+            "API Gateway API",
+            api_resources,
+            "gcloud api-gateway apis delete {name} --quiet"
+        )
+
+    def cleanup_iot(self):
+        """Clean up IoT Core resources"""
+        if not self._is_service_enabled("cloudiot.googleapis.com"):
+            logger.info("IoT Core API is not enabled. Skipping IoT Core cleanup.")
+            return
+            
+        # Get regions where IoT Core is available
+        regions = ['us-central1', 'europe-west1', 'asia-east1']
+        
+        for region in regions:
+            # List registries first
+            registry_resources = self._list_resources(
+                f"IoT Core registries in {region}",
+                f"gcloud iot registries list --region={region} --format=json"
+            )
+            
+            for registry in registry_resources:
+                registry_id = registry.get('id')
+                if not registry_id:
+                    continue
+                
+                # For each registry, list and delete devices first
+                device_resources = self._list_resources(
+                    f"IoT Core devices in registry {registry_id}",
+                    f"gcloud iot devices list --registry={registry_id} --region={region} --format=json"
+                )
+                
+                # Add registry and region to device resources for deletion
+                for device in device_resources:
+                    device['registry'] = registry_id
+                    device['region'] = region
+                
+                self._delete_resources(
+                    "IoT Core Device",
+                    device_resources,
+                    "gcloud iot devices delete {id} --registry={registry} --region={region} --quiet"
+                )
+                
+                # Then delete the registry
+                registry['region'] = region
+                self._delete_resource(
+                    "IoT Core Registry",
+                    registry,
+                    "gcloud iot registries delete {id} --region={region} --quiet"
+                )
+
+    def cleanup_filestore(self):
+        """Clean up Filestore instances"""
+        if not self._is_service_enabled("file.googleapis.com"):
+            logger.info("Filestore API is not enabled. Skipping Filestore cleanup.")
+            return
+            
+        # List all zones for Filestore instances
+        zone_cmd = "gcloud filestore instances list --format='value(zone)' | sort | uniq"
+        success, output, error = self._run_command(zone_cmd)
+        
+        if not success or not output:
+            logger.info("No Filestore zones found or unable to list zones")
+            return
+            
+        zones = output.strip().split('\n')
+        
+        for zone in zones:
+            zone = zone.strip()
+            if not zone:
+                continue
+                
+            instance_resources = self._list_resources(
+                f"Filestore instances in zone {zone}",
+                f"gcloud filestore instances list --filter='zone:{zone}' --format=json"
+            )
+            
+            # Add zone to resources for deletion
+            for resource in instance_resources:
+                resource['zone'] = zone
+                
+            self._delete_resources(
+                "Filestore Instance",
+                instance_resources,
+                "gcloud filestore instances delete {name} --zone={zone} --quiet"
             )
