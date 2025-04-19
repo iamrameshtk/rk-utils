@@ -62,51 +62,30 @@ class GCPResourceCleaner:
         try:
             logger.info("Authenticating with GCP using provided token...")
             
-            # Check if this is a service account token
-            is_service_account = hasattr(self, 'is_service_account') and self.is_service_account
+            # For access token, create a temporary file and activate it
+            fd, temp_path = tempfile.mkstemp(prefix='gcp_access_token_', suffix='.txt')
+            with os.fdopen(fd, 'w') as temp_file:
+                temp_file.write(self.auth_token)
             
-            if is_service_account:
-                # Create a temporary file to store the service account token
-                fd, temp_path = tempfile.mkstemp(prefix='gcp_sa_token_', suffix='.json')
-                with os.fdopen(fd, 'w') as temp_file:
-                    temp_file.write(self.auth_token)
+            self.temp_files.append(temp_path)
+            
+            # Try to authenticate using the access token
+            logger.info("Authenticating with access token...")
+            success, output, error = self._run_command(f"cat {temp_path} | gcloud auth activate-service-account --key-file=-")
+            
+            if not success:
+                # If that fails, try another method
+                logger.info("Standard access token authentication failed, trying alternative method...")
+                alt_success, alt_output, alt_error = self._run_command(f"gcloud auth print-access-token {self.auth_token}")
                 
-                self.temp_files.append(temp_path)
-                
-                # Authenticate using the service account token
-                logger.info("Authenticating with service account token...")
-                success, output, error = self._run_command(f"gcloud auth activate-service-account --key-file={temp_path}")
-                
-                if success:
-                    logger.info("Successfully authenticated with service account token")
+                if alt_success:
+                    logger.info("Successfully authenticated with alternative method")
                 else:
-                    logger.error(f"Service account authentication failed: {error}")
-                    raise Exception("GCP service account authentication failed")
+                    logger.error(f"Access token authentication failed: {error}")
+                    logger.error(f"Alternative method also failed: {alt_error}")
+                    raise Exception("GCP authentication failed with token from GCP_AUTH_TOKEN")
             else:
-                # For access token, create a temporary file and activate it
-                fd, temp_path = tempfile.mkstemp(prefix='gcp_access_token_', suffix='.txt')
-                with os.fdopen(fd, 'w') as temp_file:
-                    temp_file.write(self.auth_token)
-                
-                self.temp_files.append(temp_path)
-                
-                # Try to authenticate using the token file
-                logger.info("Authenticating with access token...")
-                success, output, error = self._run_command(f"cat {temp_path} | gcloud auth activate-service-account --key-file=-")
-                
-                if not success:
-                    # If that fails, try another method
-                    logger.info("Standard access token authentication failed, trying alternative method...")
-                    alt_success, alt_output, alt_error = self._run_command(f"gcloud auth print-access-token {self.auth_token}")
-                    
-                    if alt_success:
-                        logger.info("Successfully authenticated with alternative method")
-                    else:
-                        logger.error(f"Access token authentication failed: {error}")
-                        logger.error(f"Alternative method also failed: {alt_error}")
-                        raise Exception("GCP access token authentication failed")
-                else:
-                    logger.info("Successfully authenticated with access token")
+                logger.info("Successfully authenticated with access token")
                 
         except Exception as e:
             logger.error(f"Error during authentication: {str(e)}")
@@ -527,6 +506,7 @@ class GCPResourceCleaner:
 def main():
     """Main function"""
     parser = argparse.ArgumentParser(description="Clean up resources in a GCP project")
+    parser.add_argument("--project-id", "-p", help="GCP Project ID (optional, will prompt if not provided)")
     parser.add_argument("--dry-run", "-d", action="store_true", help="Dry run mode (list only, no deletion)")
     parser.add_argument("--workers", "-w", type=int, default=5, help="Maximum number of concurrent deletions")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
@@ -536,45 +516,72 @@ def main():
     if args.verbose:
         logger.setLevel(logging.DEBUG)
     
-    # Interactive user input for project ID and authentication
     print("="*80)
     print("GCP RESOURCE CLEANUP UTILITY")
     print("="*80)
     print("\nThis script will delete resources in a specified GCP project.")
-    print("Please provide the following information:\n")
     
-    # Get project ID
-    project_id = input("Enter GCP Project ID: ").strip()
-    while not project_id:
-        print("Project ID cannot be empty.")
-        project_id = input("Enter GCP Project ID: ").strip()
+    # Get project ID from command line or prompt
+    project_id = args.project_id
+    if not project_id:
+        project_id = input("\nEnter GCP Project ID: ").strip()
+        while not project_id:
+            print("Project ID cannot be empty.")
+            project_id = input("Enter GCP Project ID: ").strip()
     
-    # Get authentication token type
-    print("\nAuthentication Type:")
-    print("1. GCP Access Token (preferred)")
-    print("2. Service Account Token")
+    # Check for GCP_AUTH_TOKEN environment variable
+    auth_token = os.environ.get('GCP_AUTH_TOKEN')
+    if not auth_token:
+        print("\n⚠️  Environment variable GCP_AUTH_TOKEN not found.")
+        print("Please set the GCP_AUTH_TOKEN environment variable with your access token.")
+        print("Example: export GCP_AUTH_TOKEN=your_access_token")
+        sys.exit(1)
+    else:
+        logger.info("Found GCP_AUTH_TOKEN environment variable")
     
-    auth_type = input("\nSelect authentication type (1-2): ").strip()
-    auth_token = None
-    is_service_account = False
+    # Display information about what will be done
+    print("\n" + "="*80)
+    print(f"READY TO CLEAN UP PROJECT: {project_id}")
+    print("="*80)
+    print("\nThis will scan for and delete the following resource types:")
+    print("- Compute Engine instances and disks")
+    print("- GKE clusters")
+    print("- Cloud SQL instances")
+    print("- Cloud Functions")
+    print("- Cloud Run services")
+    print("- Pub/Sub topics")
+    print("- Firestore indexes")
+    print("- Storage buckets")
+    print("- BigQuery datasets")
+    print("- VPC networks (excluding default)")
     
-    while auth_token is None:
-        if auth_type == "1":
-            print("\nEnter your GCP Access Token:")
-            auth_token = getpass.getpass("Access Token: ").strip()
-            is_service_account = False
-        elif auth_type == "2":
-            print("\nEnter your Service Account Token:")
-            auth_token = getpass.getpass("Service Account Token: ").strip()
-            is_service_account = True
-        else:
-            print("Invalid choice.")
-            auth_type = input("\nSelect authentication type (1-2): ").strip()
-            continue
-            
-        if not auth_token:
-            print("Authentication token cannot be empty.")
-            auth_token = None
+    if args.dry_run:
+        print("\n⚠️  DRY RUN MODE: Resources will only be listed, not deleted.")
+    else:
+        print("\n⚠️  WARNING: THIS OPERATION WILL DELETE RESOURCES! IT CANNOT BE UNDONE!")
+    
+    # Get confirmation
+    confirm = input("\nAre you sure you want to proceed? (yes/no): ").strip().lower()
+    
+    if confirm != "yes":
+        print("Operation cancelled by user.")
+        return
+    
+    try:
+        cleaner = GCPResourceCleaner(
+            project_id=project_id,
+            dry_run=args.dry_run,
+            max_workers=args.workers,
+            auth_token=auth_token,
+            is_service_account=False
+        )
+        cleaner.run_cleanup()
+    except KeyboardInterrupt:
+        logger.warning("Operation interrupted by user")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
+        sys.exit(1)
     
     # Display information about what will be done
     print("\n" + "="*80)
