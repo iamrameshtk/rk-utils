@@ -24,7 +24,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class GCPResourceCleaner:
-    def __init__(self, project_id: str, dry_run: bool = False, max_workers: int = 5, auth_token: str = None, is_service_account: bool = False):
+    def __init__(self, project_id: str, dry_run: bool = False, max_workers: int = 5, auth_token: str = None):
         """
         Initialize the GCP Resource Cleaner.
         
@@ -32,14 +32,12 @@ class GCPResourceCleaner:
             project_id: The GCP project ID
             dry_run: If True, only list resources without deleting
             max_workers: Maximum number of concurrent deletion operations
-            auth_token: Authentication token for GCP. If None, uses default authentication.
-            is_service_account: Whether the auth_token is a service account token.
+            auth_token: Authentication token for GCP from GCP_AUTH_TOKEN environment variable
         """
         self.project_id = project_id
         self.dry_run = dry_run
         self.max_workers = max_workers
         self.auth_token = auth_token
-        self.is_service_account = is_service_account
         self.deleted_resources = []
         self.failed_resources = []
         self.skipped_resources = []
@@ -58,11 +56,11 @@ class GCPResourceCleaner:
             logger.info("DRY RUN MODE: Resources will be listed but not deleted")
             
     def _authenticate(self):
-        """Authenticate with GCP using provided auth token"""
+        """Authenticate with GCP using access token from GCP_AUTH_TOKEN"""
         try:
-            logger.info("Authenticating with GCP using provided token...")
+            logger.info("Authenticating with GCP using access token from GCP_AUTH_TOKEN...")
             
-            # For access token, create a temporary file and activate it
+            # Create a temporary file for the access token
             fd, temp_path = tempfile.mkstemp(prefix='gcp_access_token_', suffix='.txt')
             with os.fdopen(fd, 'w') as temp_file:
                 temp_file.write(self.auth_token)
@@ -70,12 +68,11 @@ class GCPResourceCleaner:
             self.temp_files.append(temp_path)
             
             # Try to authenticate using the access token
-            logger.info("Authenticating with access token...")
             success, output, error = self._run_command(f"cat {temp_path} | gcloud auth activate-service-account --key-file=-")
             
             if not success:
-                # If that fails, try another method
-                logger.info("Standard access token authentication failed, trying alternative method...")
+                # If that fails, try alternative authentication method
+                logger.info("Standard token authentication failed, trying alternative method...")
                 alt_success, alt_output, alt_error = self._run_command(f"gcloud auth print-access-token {self.auth_token}")
                 
                 if alt_success:
@@ -572,8 +569,7 @@ def main():
             project_id=project_id,
             dry_run=args.dry_run,
             max_workers=args.workers,
-            auth_token=auth_token,
-            is_service_account=False
+            auth_token=auth_token
         )
         cleaner.run_cleanup()
     except KeyboardInterrupt:
