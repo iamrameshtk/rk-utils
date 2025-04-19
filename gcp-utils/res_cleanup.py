@@ -60,34 +60,19 @@ class GCPResourceCleaner:
         try:
             logger.info("Authenticating with GCP using access token from GCP_AUTH_TOKEN...")
             
-            # Create a temporary file for the access token
-            fd, temp_path = tempfile.mkstemp(prefix='gcp_access_token_', suffix='.txt')
-            with os.fdopen(fd, 'w') as temp_file:
-                temp_file.write(self.auth_token)
-            
-            self.temp_files.append(temp_path)
-            
-            # Try to authenticate using the access token
-            success, output, error = self._run_command(f"cat {temp_path} | gcloud auth activate-service-account --key-file=-")
+            # Set the access token directly using gcloud config
+            command = f"gcloud auth print-access-token"
+            success, output, error = self._run_command(command)
             
             if not success:
-                # If that fails, try alternative authentication method
-                logger.info("Standard token authentication failed, trying alternative method...")
-                alt_success, alt_output, alt_error = self._run_command(f"gcloud auth print-access-token {self.auth_token}")
-                
-                if alt_success:
-                    logger.info("Successfully authenticated with alternative method")
-                else:
-                    logger.error(f"Access token authentication failed: {error}")
-                    logger.error(f"Alternative method also failed: {alt_error}")
-                    raise Exception("GCP authentication failed with token from GCP_AUTH_TOKEN")
+                logger.error(f"Access token authentication failed: {error}")
+                raise Exception("GCP authentication failed with token from GCP_AUTH_TOKEN")
             else:
-                logger.info("Successfully authenticated with access token")
+                logger.info("Successfully authenticated with GCP_AUTH_TOKEN")
                 
         except Exception as e:
             logger.error(f"Error during authentication: {str(e)}")
-            self._cleanup_temp_files()
-            raise
+            sys.exit(1)
 
     def _cleanup_temp_files(self):
         """Clean up any temporary files created during the process"""
