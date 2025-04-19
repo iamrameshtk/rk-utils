@@ -441,14 +441,22 @@ class GCPResourceCleaner:
             "gcloud pubsub topics list --format=json"
         )
         
+        # Create a new list with processed resources to avoid KeyError
+        processed_resources = []
+        
         # Extract only the topic name from the full path
         for resource in resources:
             if 'name' in resource:
-                resource['short_name'] = resource['name'].split('/')[-1]
+                # Create a new resource object with the short_name
+                new_resource = resource.copy()
+                new_resource['short_name'] = resource['name'].split('/')[-1]
+                processed_resources.append(new_resource)
+            else:
+                logger.warning(f"Skipping Pub/Sub resource without name: {resource}")
         
         self._delete_resources(
             "Pub/Sub Topic", 
-            resources,
+            processed_resources,
             "gcloud pubsub topics delete {short_name} --quiet"
         )
 
