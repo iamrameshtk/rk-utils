@@ -1,4 +1,20 @@
 #!/usr/bin/env python3
+"""
+GCP Resource Cleanup Utility
+
+This script helps you clean up resources in a Google Cloud Platform project.
+It can delete various resource types including compute instances, GKE clusters,
+Cloud SQL instances, and more.
+
+Usage:
+  python gcp_cleanup.py --project-id=PROJECT_ID [--dry-run] [--verbose]
+
+Requirements:
+  - Google Cloud SDK (gcloud) installed and configured
+  - GCP_AUTH_TOKEN environment variable set with a valid access token
+  - Required permissions to list and delete resources in the project
+"""
+
 import subprocess
 import json
 import logging
@@ -104,187 +120,6 @@ class GCPResourceCleaner:
                 stderr=subprocess.PIPE,
                 text=True
             )
-
-    def print_summary(self):
-        """Print a summary of the cleanup operation"""
-        print("\n" + "="*80)
-        print(f"GCP RESOURCE CLEANUP SUMMARY FOR PROJECT: {self.project_id}")
-        print("="*80)
-        
-        # Successful deletions
-        if self.deleted_resources:
-            print("\nSUCCESSFULLY DELETED RESOURCES:")
-            table_data = []
-            for resource_type, name, status in self.deleted_resources:
-                table_data.append([resource_type, name, "✅ " + status])
-            print(tabulate(table_data, headers=["Resource Type", "Name", "Status"], tablefmt="grid"))
-        else:
-            print("\nNo resources were deleted.")
-            
-        # Skipped resources
-        if self.skipped_resources:
-            print("\nSKIPPED RESOURCES:")
-            table_data = []
-            for resource_type, name, reason in self.skipped_resources:
-                table_data.append([resource_type, name, "⏭️ " + reason])
-            print(tabulate(table_data, headers=["Resource Type", "Name", "Reason"], tablefmt="grid"))
-            
-        # Failed deletions
-        if self.failed_resources:
-            print("\nFAILED DELETIONS:")
-            table_data = []
-            for resource_type, name, error in self.failed_resources:
-                error_msg = (error[:47] + '...') if len(error) > 50 else error
-                table_data.append([resource_type, name, "❌ " + error_msg])
-            print(tabulate(table_data, headers=["Resource Type", "Name", "Error"], tablefmt="grid"))
-            
-        # Missing permissions
-        if self.missing_permissions:
-            print("\nMISSING PERMISSIONS:")
-            for resource_type in self.missing_permissions:
-                print(f"⚠️  {resource_type}")
-                
-        print("\nSUMMARY STATISTICS:")
-        print(f"Total resources deleted: {len(self.deleted_resources)}")
-        print(f"Total resources skipped: {len(self.skipped_resources)}")
-        print(f"Total failed deletions: {len(self.failed_resources)}")
-        print(f"Resource types with missing permissions: {len(self.missing_permissions)}")
-        
-        if self.dry_run:
-            print("\n⚠️  THIS WAS A DRY RUN. NO ACTUAL DELETIONS WERE PERFORMED.")
-            
-        print("="*80)
-        
-        # Clean up temporary files
-        self._cleanup_temp_files()
-
-    def run_cleanup(self):
-        """Run the full cleanup process"""
-        logger.info(f"Starting resource cleanup for project: {self.project_id}")
-        
-        # Call all cleanup methods
-        self.cleanup_compute_instances()
-        self.cleanup_compute_disks()
-        self.cleanup_gke_clusters()
-        self.cleanup_cloud_sql()
-        self.cleanup_cloud_functions()
-        self.cleanup_cloud_run()
-        self.cleanup_pubsub()
-        self.cleanup_firestore_indexes()
-        self.cleanup_storage_buckets()
-        self.cleanup_bigquery_datasets()
-        self.cleanup_vpc_networks()
-        
-        # Additional services
-        self.cleanup_spanner()
-        self.cleanup_composer()
-        self.cleanup_memorystore()
-        self.cleanup_logging()
-        self.cleanup_data_catalog()
-        self.cleanup_dataproc()
-        self.cleanup_dataproc_serverless()
-        self.cleanup_ai_platform()
-        self.cleanup_api_gateway()
-        self.cleanup_iot()
-        self.cleanup_filestore()
-        
-        # Print summary
-        self.print_summary()
-
-
-def main():
-    """Main function"""
-    parser = argparse.ArgumentParser(description="Clean up resources in a GCP project")
-    parser.add_argument("--project-id", "-p", help="GCP Project ID (optional, will prompt if not provided)")
-    parser.add_argument("--dry-run", "-d", action="store_true", help="Dry run mode (list only, no deletion)")
-    parser.add_argument("--workers", "-w", type=int, default=5, help="Maximum number of concurrent deletions")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
-    
-    args = parser.parse_args()
-    
-    if args.verbose:
-        logger.setLevel(logging.DEBUG)
-    
-    print("="*80)
-    print("GCP RESOURCE CLEANUP UTILITY")
-    print("="*80)
-    print("\nThis script will delete resources in a specified GCP project.")
-    
-    # Get project ID from command line or prompt
-    project_id = args.project_id
-    if not project_id:
-        project_id = input("\nEnter GCP Project ID: ").strip()
-        while not project_id:
-            print("Project ID cannot be empty.")
-            project_id = input("Enter GCP Project ID: ").strip()
-    
-    # Check for GCP_AUTH_TOKEN environment variable
-    auth_token = os.environ.get('GCP_AUTH_TOKEN')
-    if not auth_token:
-        print("\n⚠️  Environment variable GCP_AUTH_TOKEN not found.")
-        print("Please set the GCP_AUTH_TOKEN environment variable with your access token.")
-        print("Example: export GCP_AUTH_TOKEN=your_access_token")
-        sys.exit(1)
-    else:
-        logger.info("Found GCP_AUTH_TOKEN environment variable")
-    
-    # Display information about what will be done
-    print("\n" + "="*80)
-    print(f"READY TO CLEAN UP PROJECT: {project_id}")
-    print("="*80)
-    print("\nThis will scan for and delete the following resource types:")
-    print("- Compute Engine instances and disks")
-    print("- GKE clusters")
-    print("- Cloud SQL instances")
-    print("- Cloud Functions")
-    print("- Cloud Run services")
-    print("- Pub/Sub topics")
-    print("- Firestore indexes")
-    print("- Storage buckets")
-    print("- BigQuery datasets")
-    print("- VPC networks (excluding default)")
-    print("- Spanner instances and databases")
-    print("- Cloud Composer environments")
-    print("- Memorystore instances (Redis and Memcached)")
-    print("- Log Buckets and Log Sinks")
-    print("- Data Catalog entries and tag templates")
-    print("- Dataproc clusters")
-    print("- Dataproc Serverless batches and sessions")
-    print("- AI Platform resources (models, datasets, endpoints)")
-    print("- API Gateway resources")
-    print("- IoT Core registries and devices")
-    print("- Filestore instances")
-    
-    if args.dry_run:
-        print("\n⚠️  DRY RUN MODE: Resources will only be listed, not deleted.")
-    else:
-        print("\n⚠️  WARNING: THIS OPERATION WILL DELETE RESOURCES! IT CANNOT BE UNDONE!")
-    
-    # Get confirmation
-    confirm = input("\nAre you sure you want to proceed? (yes/no): ").strip().lower()
-    
-    if confirm != "yes":
-        print("Operation cancelled by user.")
-        return
-    
-    try:
-        cleaner = GCPResourceCleaner(
-            project_id=project_id,
-            dry_run=args.dry_run,
-            max_workers=args.workers,
-            auth_token=auth_token
-        )
-        cleaner.run_cleanup()
-    except KeyboardInterrupt:
-        logger.warning("Operation interrupted by user")
-        sys.exit(1)
-    except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
             return (result.returncode == 0, result.stdout.strip(), result.stderr.strip())
         except Exception as e:
             logger.error(f"Command execution error: {str(e)}")
@@ -1185,3 +1020,184 @@ if __name__ == "__main__":
                 instance_resources,
                 "gcloud filestore instances delete {name} --zone={zone} --quiet"
             )
+
+    def print_summary(self):
+        """Print a summary of the cleanup operation"""
+        print("\n" + "="*80)
+        print(f"GCP RESOURCE CLEANUP SUMMARY FOR PROJECT: {self.project_id}")
+        print("="*80)
+        
+        # Successful deletions
+        if self.deleted_resources:
+            print("\nSUCCESSFULLY DELETED RESOURCES:")
+            table_data = []
+            for resource_type, name, status in self.deleted_resources:
+                table_data.append([resource_type, name, "✅ " + status])
+            print(tabulate(table_data, headers=["Resource Type", "Name", "Status"], tablefmt="grid"))
+        else:
+            print("\nNo resources were deleted.")
+            
+        # Skipped resources
+        if self.skipped_resources:
+            print("\nSKIPPED RESOURCES:")
+            table_data = []
+            for resource_type, name, reason in self.skipped_resources:
+                table_data.append([resource_type, name, "⏭️ " + reason])
+            print(tabulate(table_data, headers=["Resource Type", "Name", "Reason"], tablefmt="grid"))
+            
+        # Failed deletions
+        if self.failed_resources:
+            print("\nFAILED DELETIONS:")
+            table_data = []
+            for resource_type, name, error in self.failed_resources:
+                error_msg = (error[:47] + '...') if len(error) > 50 else error
+                table_data.append([resource_type, name, "❌ " + error_msg])
+            print(tabulate(table_data, headers=["Resource Type", "Name", "Error"], tablefmt="grid"))
+            
+        # Missing permissions
+        if self.missing_permissions:
+            print("\nMISSING PERMISSIONS:")
+            for resource_type in self.missing_permissions:
+                print(f"⚠️  {resource_type}")
+                
+        print("\nSUMMARY STATISTICS:")
+        print(f"Total resources deleted: {len(self.deleted_resources)}")
+        print(f"Total resources skipped: {len(self.skipped_resources)}")
+        print(f"Total failed deletions: {len(self.failed_resources)}")
+        print(f"Resource types with missing permissions: {len(self.missing_permissions)}")
+        
+        if self.dry_run:
+            print("\n⚠️  THIS WAS A DRY RUN. NO ACTUAL DELETIONS WERE PERFORMED.")
+            
+        print("="*80)
+        
+        # Clean up temporary files
+        self._cleanup_temp_files()
+
+    def run_cleanup(self):
+        """Run the full cleanup process"""
+        logger.info(f"Starting resource cleanup for project: {self.project_id}")
+        
+        # Call all cleanup methods
+        self.cleanup_compute_instances()
+        self.cleanup_compute_disks()
+        self.cleanup_gke_clusters()
+        self.cleanup_cloud_sql()
+        self.cleanup_cloud_functions()
+        self.cleanup_cloud_run()
+        self.cleanup_pubsub()
+        self.cleanup_firestore_indexes()
+        self.cleanup_storage_buckets()
+        self.cleanup_bigquery_datasets()
+        self.cleanup_vpc_networks()
+        
+        # Additional services
+        self.cleanup_spanner()
+        self.cleanup_composer()
+        self.cleanup_memorystore()
+        self.cleanup_logging()
+        self.cleanup_data_catalog()
+        self.cleanup_dataproc()
+        self.cleanup_dataproc_serverless()
+        self.cleanup_ai_platform()
+        self.cleanup_api_gateway()
+        self.cleanup_iot()
+        self.cleanup_filestore()
+        
+        # Print summary
+        self.print_summary()
+
+
+def main():
+    """Main function"""
+    parser = argparse.ArgumentParser(description="Clean up resources in a GCP project")
+    parser.add_argument("--project-id", "-p", help="GCP Project ID (optional, will prompt if not provided)")
+    parser.add_argument("--dry-run", "-d", action="store_true", help="Dry run mode (list only, no deletion)")
+    parser.add_argument("--workers", "-w", type=int, default=5, help="Maximum number of concurrent deletions")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
+    
+    args = parser.parse_args()
+    
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
+    
+    print("="*80)
+    print("GCP RESOURCE CLEANUP UTILITY")
+    print("="*80)
+    print("\nThis script will delete resources in a specified GCP project.")
+    
+    # Get project ID from command line or prompt
+    project_id = args.project_id
+    if not project_id:
+        project_id = input("\nEnter GCP Project ID: ").strip()
+        while not project_id:
+            print("Project ID cannot be empty.")
+            project_id = input("Enter GCP Project ID: ").strip()
+    
+    # Check for GCP_AUTH_TOKEN environment variable
+    auth_token = os.environ.get('GCP_AUTH_TOKEN')
+    if not auth_token:
+        print("\n⚠️  Environment variable GCP_AUTH_TOKEN not found.")
+        print("Please set the GCP_AUTH_TOKEN environment variable with your access token.")
+        print("Example: export GCP_AUTH_TOKEN=your_access_token")
+        sys.exit(1)
+    else:
+        logger.info("Found GCP_AUTH_TOKEN environment variable")
+    
+    # Display information about what will be done
+    print("\n" + "="*80)
+    print(f"READY TO CLEAN UP PROJECT: {project_id}")
+    print("="*80)
+    print("\nThis will scan for and delete the following resource types:")
+    print("- Compute Engine instances and disks")
+    print("- GKE clusters")
+    print("- Cloud SQL instances")
+    print("- Cloud Functions")
+    print("- Cloud Run services")
+    print("- Pub/Sub topics")
+    print("- Firestore indexes")
+    print("- Storage buckets")
+    print("- BigQuery datasets")
+    print("- VPC networks (excluding default)")
+    print("- Spanner instances and databases")
+    print("- Cloud Composer environments")
+    print("- Memorystore instances (Redis and Memcached)")
+    print("- Log Buckets and Log Sinks")
+    print("- Data Catalog entries and tag templates")
+    print("- Dataproc clusters")
+    print("- Dataproc Serverless batches and sessions")
+    print("- AI Platform resources (models, datasets, endpoints)")
+    print("- API Gateway resources")
+    print("- IoT Core registries and devices")
+    print("- Filestore instances")
+    
+    if args.dry_run:
+        print("\n⚠️  DRY RUN MODE: Resources will only be listed, not deleted.")
+    else:
+        print("\n⚠️  WARNING: THIS OPERATION WILL DELETE RESOURCES! IT CANNOT BE UNDONE!")
+    
+    # Get confirmation
+    confirm = input("\nAre you sure you want to proceed? (yes/no): ").strip().lower()
+    
+    if confirm != "yes":
+        print("Operation cancelled by user.")
+        return
+    
+    try:
+        cleaner = GCPResourceCleaner(
+            project_id=project_id,
+            dry_run=args.dry_run,
+            max_workers=args.workers,
+            auth_token=auth_token
+        )
+        cleaner.run_cleanup()
+    except KeyboardInterrupt:
+        logger.warning("Operation interrupted by user")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
