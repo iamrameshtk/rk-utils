@@ -1,4 +1,180 @@
-def cleanup_dataproc(self) -> None:
+def cleanup_iot(self) -> None:
+        """Clean up IoT Core resources"""
+        if not self._is_service_enabled("cloudiot.googleapis.com"):
+            logger.info("IoT Core API is not enabled. Skipping IoT Core cleanup.")
+            return
+            
+        # Get regions where IoT Core is available
+        regions = ['us-central1', 'europe-west1', 'asia-east1']
+        
+        for region in regions:
+            # List registries first
+            registry_resources = self._list_resources(
+                f"IoT Core registries in {region}",
+                f"gcloud iot registries list --region={region} --format=json"
+            )
+            
+            for registry in registry_resources:
+                registry_id = registry.get('id')
+                if not registry_id:
+                    continue
+                
+                # For each registry, list and delete devices first
+                device_resources = self._list_resources(
+                    f"IoT Core devices in registry {registry_id}",
+                    f"gcloud iot devices list --registry={registry_id} --region={region} --format=json"
+                )
+                
+                # Add registry and region to device resources for deletion
+                for device in device_resources:
+                    device['registry'] = registry_id
+                    device['region'] = region
+                
+                self._delete_resources(
+                    "IoT Core Device",
+                    device_resources,
+                    "gcloud iot devices delete {id} --registry={registry} --region={region} --quiet"
+                )
+                
+                # Then delete the registry
+                registry['region'] = region
+                self._delete_resource(
+                    "IoT Core Registry",
+                    registry,
+                    "gcloud iot registries delete {id} --region={region} --quiet"
+                )
+
+    def cleanup_filestore(self) -> None:
+        """Clean up Filestore instances"""
+        if not self._is_service_enabled("file.googleapis.com"):
+            logger.info("Filestore API is not enabled. Skipping Filestore cleanup.")
+            return
+            
+        # List all zones for Filestore instances
+        zone_cmd = "gcloud filestore instances list --format='value(zone)' | sort | uniq"
+        success, output, error = self._run_command(zone_cmd)
+        
+        if not success or not output:
+            logger.info("No Filestore zones found or unable to list zones")
+            return
+            
+        zones = output.strip().split('\n')
+        
+        for zone in zones:
+            zone = zone.strip()
+            if not zone:
+                continue
+                
+            instance_resources = self._list_resources(
+                f"Filestore instances in zone {zone}",
+                f"gcloud filestore instances list --filter='zone:{zone}' --format=json"
+            )
+            
+            # Add zone to resources for deletion
+            for resource in instance_resources:
+                resource['zone'] = zone
+                
+            self._delete_resources(
+                "Filestore Instance",
+                instance_resources,
+                "gcloud filestore instances delete {name} --zone={zone} --quiet"
+            )    def cleanup_ai_platform(self) -> None:
+        """Clean up AI Platform resources (models, datasets, etc.)"""
+        if not self._is_service_enabled("aiplatform.googleapis.com"):
+            logger.info("AI Platform API is not enabled. Skipping AI Platform cleanup.")
+            return
+            
+        # Get regions where AI Platform is available
+        regions = ['us-central1', 'europe-west4', 'asia-east1', 'global']
+        
+        for region in regions:
+            logger.info(f"Checking for AI Platform resources in {region}")
+            
+            # Clean up models
+            model_resources = self._list_resources(
+                f"AI Platform models in {region}",
+                f"gcloud ai models list --region={region} --format=json"
+            )
+            
+            # Add region to resources for deletion
+            for resource in model_resources:
+                resource['region'] = region
+                
+            self._delete_resources(
+                "AI Platform Model",
+                model_resources,
+                "gcloud ai models delete {name} --region={region} --quiet"
+            )
+            
+            # Clean up datasets
+            dataset_resources = self._list_resources(
+                f"AI Platform datasets in {region}",
+                f"gcloud ai datasets list --region={region} --format=json"
+            )
+            
+            # Add region to resources for deletion
+            for resource in dataset_resources:
+                resource['region'] = region
+                
+            self._delete_resources(
+                "AI Platform Dataset",
+                dataset_resources,
+                "gcloud ai datasets delete {name} --region={region} --quiet"
+            )
+            
+            # Clean up endpoints
+            endpoint_resources = self._list_resources(
+                f"AI Platform endpoints in {region}",
+                f"gcloud ai endpoints list --region={region} --format=json"
+            )
+            
+            # Add region to resources for deletion
+            for resource in endpoint_resources:
+                resource['region'] = region
+                
+            self._delete_resources(
+                "AI Platform Endpoint",
+                endpoint_resources,
+                "gcloud ai endpoints delete {name} --region={region} --quiet"
+            )
+
+    def cleanup_api_gateway(self) -> None:
+        """Clean up API Gateway resources"""
+        if not self._is_service_enabled("apigateway.googleapis.com"):
+            logger.info("API Gateway API is not enabled. Skipping API Gateway cleanup.")
+            return
+            
+        # Clean up gateways
+        gateway_resources = self._list_resources(
+            "API Gateways",
+            "gcloud api-gateway gateways list --format=json"
+        )
+        
+        for resource in gateway_resources:
+            # Format may be projects/*/locations/*/gateways/*
+            if 'name' in resource:
+                parts = resource['name'].split('/')
+                if len(parts) >= 6:
+                    resource['location'] = parts[3]
+                    resource['gateway_id'] = parts[5]
+        
+        self._delete_resources(
+            "API Gateway",
+            gateway_resources,
+            "gcloud api-gateway gateways delete {gateway_id} --location={location} --quiet"
+        )
+        
+        # Clean up APIs
+        api_resources = self._list_resources(
+            "API Gateway APIs",
+            "gcloud api-gateway apis list --format=json"
+        )
+        
+        self._delete_resources(
+            "API Gateway API",
+            api_resources,
+            "gcloud api-gateway apis delete {name} --quiet"
+        )    def cleanup_dataproc(self) -> None:
         """Clean up Dataproc clusters"""
         if not self._is_service_enabled("dataproc.googleapis.com"):
             logger.info("Dataproc API is not enabled. Skipping Dataproc cleanup.")
@@ -838,7 +1014,7 @@ class GCPResourceCleaner:
         self.cleanup_bigquery_datasets()
         self.cleanup_vpc_networks()
         
-        # New services
+        # Additional services
         self.cleanup_spanner()
         self.cleanup_composer()
         self.cleanup_memorystore()
@@ -846,6 +1022,10 @@ class GCPResourceCleaner:
         self.cleanup_data_catalog()
         self.cleanup_dataproc()
         self.cleanup_dataproc_serverless()
+        self.cleanup_ai_platform()
+        self.cleanup_api_gateway()
+        self.cleanup_iot()
+        self.cleanup_filestore()
         
         # Print summary
         self.print_summary()
@@ -961,6 +1141,10 @@ def main():
     print("- Data Catalog entries and tag templates")
     print("- Dataproc clusters")
     print("- Dataproc Serverless batches and sessions")
+    print("- AI Platform resources (models, datasets, endpoints)")
+    print("- API Gateway resources")
+    print("- IoT Core registries and devices")
+    print("- Filestore instances")
     
     if args.dry_run:
         print("\n⚠️  DRY RUN MODE: Resources will only be listed, not deleted.")
