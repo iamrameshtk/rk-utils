@@ -54,7 +54,7 @@ class GCPResourceCleaner:
         logger.info(f"GCP Resource Cleaner initialized for project: {self.project_id}")
         if self.dry_run:
             logger.info("DRY RUN MODE: Resources will be listed but not deleted")
-            
+
     def _authenticate(self):
         """Authenticate with GCP using access token from GCP_AUTH_TOKEN"""
         try:
@@ -88,6 +88,16 @@ class GCPResourceCleaner:
             logger.error(f"Error during authentication: {str(e)}")
             self._cleanup_temp_files()
             raise
+
+    def _cleanup_temp_files(self):
+        """Clean up any temporary files created during the process"""
+        for temp_file in self.temp_files:
+            try:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+                    logger.debug(f"Removed temporary file: {temp_file}")
+            except Exception as e:
+                logger.warning(f"Failed to remove temporary file {temp_file}: {str(e)}")
 
     def _run_command(self, command: str) -> Tuple[bool, str, str]:
         """
@@ -436,16 +446,6 @@ class GCPResourceCleaner:
         # Print summary
         self.print_summary()
 
-    def _cleanup_temp_files(self):
-        """Clean up any temporary files created during the process"""
-        for temp_file in self.temp_files:
-            try:
-                if os.path.exists(temp_file):
-                    os.remove(temp_file)
-                    logger.debug(f"Removed temporary file: {temp_file}")
-            except Exception as e:
-                logger.warning(f"Failed to remove temporary file {temp_file}: {str(e)}")
-                
     def print_summary(self) -> None:
         """Print a summary of the cleanup operation"""
         print("\n" + "="*80)
@@ -463,7 +463,7 @@ class GCPResourceCleaner:
             print("\nNo resources were deleted.")
             
         # Skipped resources
-        if hasattr(self, 'skipped_resources') and self.skipped_resources:
+        if self.skipped_resources:
             print("\nSKIPPED RESOURCES:")
             table_data = []
             for resource_type, name, reason in self.skipped_resources:
@@ -487,8 +487,7 @@ class GCPResourceCleaner:
                 
         print("\nSUMMARY STATISTICS:")
         print(f"Total resources deleted: {len(self.deleted_resources)}")
-        skipped_count = len(self.skipped_resources) if hasattr(self, 'skipped_resources') else 0
-        print(f"Total resources skipped: {skipped_count}")
+        print(f"Total resources skipped: {len(self.skipped_resources)}")
         print(f"Total failed deletions: {len(self.failed_resources)}")
         print(f"Resource types with missing permissions: {len(self.missing_permissions)}")
         
@@ -570,50 +569,6 @@ def main():
             dry_run=args.dry_run,
             max_workers=args.workers,
             auth_token=auth_token
-        )
-        cleaner.run_cleanup()
-    except KeyboardInterrupt:
-        logger.warning("Operation interrupted by user")
-        sys.exit(1)
-    except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
-        sys.exit(1)
-    
-    # Display information about what will be done
-    print("\n" + "="*80)
-    print(f"READY TO CLEAN UP PROJECT: {project_id}")
-    print("="*80)
-    print("\nThis will scan for and delete the following resource types:")
-    print("- Compute Engine instances and disks")
-    print("- GKE clusters")
-    print("- Cloud SQL instances")
-    print("- Cloud Functions")
-    print("- Cloud Run services")
-    print("- Pub/Sub topics")
-    print("- Firestore indexes")
-    print("- Storage buckets")
-    print("- BigQuery datasets")
-    print("- VPC networks (excluding default)")
-    
-    if args.dry_run:
-        print("\n⚠️  DRY RUN MODE: Resources will only be listed, not deleted.")
-    else:
-        print("\n⚠️  WARNING: THIS OPERATION WILL DELETE RESOURCES! IT CANNOT BE UNDONE!")
-    
-    # Get confirmation
-    confirm = input("\nAre you sure you want to proceed? (yes/no): ").strip().lower()
-    
-    if confirm != "yes":
-        print("Operation cancelled by user.")
-        return
-    
-    try:
-        cleaner = GCPResourceCleaner(
-            project_id=project_id,
-            dry_run=args.dry_run,
-            max_workers=args.workers,
-            auth_token=auth_token,
-            is_service_account=is_service_account
         )
         cleaner.run_cleanup()
     except KeyboardInterrupt:
