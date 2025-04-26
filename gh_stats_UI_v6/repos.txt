@@ -1,5 +1,0 @@
-terraform-google-kubernetes-engine
-terraform-google-vault
-terraform-google-dataflow
-terraform-google-vm
-terraform-google-pubsub
