@@ -88,7 +88,10 @@ with DAG(
             # Get authentication token
             google_hook = GoogleBaseHook(gcp_conn_id='google_cloud_default')
             credentials, _ = google_hook.get_credentials_and_project_id()
-            request = google_hook._get_request()
+            
+            # Refresh the token using Request() directly
+            from google.auth.transport.requests import Request
+            request = Request()
             credentials.refresh(request)
             token = credentials.token
             
