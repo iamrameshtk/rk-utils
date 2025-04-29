@@ -11,9 +11,12 @@ from datetime import datetime, timedelta
 
 from airflow import DAG
 from airflow.providers.google.cloud.hooks.datafusion import DataFusionHook
+from airflow.providers.google.cloud.hooks.gcp import GoogleCloudBaseHook
 from airflow.operators.python import PythonOperator
 from airflow.models import Variable
 from airflow.exceptions import AirflowException
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -123,12 +126,26 @@ with DAG(
             
             logger.info(f"Successfully retrieved API endpoint: {api_endpoint}")
             
-            # Get auth token from the hook
+            # Get auth token using the correct method from the hook
             try:
-                credentials = datafusion_hook._get_credentials()
+                # The get_credentials method is available in the hook but may have a different name
+                # Let's use the appropriate method to get credentials
+                from google.oauth2.credentials import Credentials
+                from google.auth.transport.requests import Request
+                
+                # Use hook's connection to get credentials
+                connection = datafusion_hook.get_connection(datafusion_hook.gcp_conn_id)
+                credentials = datafusion_hook._get_credentials_and_project_id()[0]
+                
+                # Make sure token is fresh
+                if not credentials.valid:
+                    credentials.refresh(Request())
+                
                 token = credentials.token
                 if not token:
                     raise DataFusionAuthException("Authentication token is empty")
+                
+                logger.info("Successfully obtained authentication credentials")
             except Exception as e:
                 logger.error(f"Authentication error: {str(e)}")
                 raise DataFusionAuthException(f"Failed to get authentication token: {str(e)}")
