@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 
 from airflow import DAG
 from airflow.providers.google.cloud.hooks.datafusion import DataFusionHook
-from airflow.providers.google.cloud.hooks.gcp import GoogleCloudBaseHook
+from airflow.providers.google.common.hooks.base_google import GoogleBaseHook
 from airflow.operators.python import PythonOperator
 from airflow.models import Variable
 from airflow.exceptions import AirflowException
@@ -128,20 +128,26 @@ with DAG(
             
             # Get auth token using the correct method from the hook
             try:
-                # The get_credentials method is available in the hook but may have a different name
-                # Let's use the appropriate method to get credentials
-                from google.oauth2.credentials import Credentials
-                from google.auth.transport.requests import Request
-                
-                # Use hook's connection to get credentials
-                connection = datafusion_hook.get_connection(datafusion_hook.gcp_conn_id)
-                credentials = datafusion_hook._get_credentials_and_project_id()[0]
+                # Use GoogleBaseHook for authentication
+                google_hook = GoogleBaseHook(gcp_conn_id=datafusion_hook.gcp_conn_id)
+                credentials, project_id = google_hook.get_credentials_and_project_id()
                 
                 # Make sure token is fresh
-                if not credentials.valid:
+                if hasattr(credentials, 'valid') and not credentials.valid:
                     credentials.refresh(Request())
                 
-                token = credentials.token
+                # Different credential types might store the token differently
+                if hasattr(credentials, 'token'):
+                    token = credentials.token
+                elif hasattr(credentials, '_token'):
+                    token = credentials._token
+                else:
+                    # For service account credentials
+                    request = Request()
+                    credentials.refresh(request)
+                    auth_req = google_hook._authorize()
+                    token = auth_req.credentials.token
+                
                 if not token:
                     raise DataFusionAuthException("Authentication token is empty")
                 
