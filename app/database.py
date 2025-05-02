@@ -4,10 +4,8 @@ from sqlalchemy.orm import sessionmaker
 
 from app.config import DATABASE_URL
 
-# SQLite requires check_same_thread=False
-connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
-
-engine = create_engine(DATABASE_URL, connect_args=connect_args)
+# Using the psycopg3 dialect
+engine = create_engine(DATABASE_URL.replace("postgresql://", "postgresql+psycopg://"))
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
