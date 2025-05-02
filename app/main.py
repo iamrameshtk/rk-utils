@@ -7,7 +7,7 @@ from typing import List, Optional
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Depends
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, MetaData, Table, select
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 
@@ -58,7 +58,7 @@ class SonarQubeReportResponse(BaseModel):
     security_rating: float
     
     class Config:
-        from_attributes = True
+        orm_mode = True
 
 # Dependency to get database session
 def get_db():
@@ -72,7 +72,7 @@ def get_db():
 app = FastAPI(title="SonarQube Report API")
 
 @app.get("/", response_model=List[SonarQubeReportResponse])
-async def read_reports(
+def read_reports(
     repository_key: Optional[str] = Query(None, description="Filter by repository key"),
     limit: int = Query(100, ge=1, le=1000, description="Number of records to return"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
@@ -100,7 +100,7 @@ async def read_reports(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/health")
-async def health_check():
+def health_check():
     try:
         # Simple health check - verify database connection
         with SessionLocal() as db:
