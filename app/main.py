@@ -44,13 +44,14 @@ Base = declarative_base()
 class SonarQubeReport(Base):
     __tablename__ = "sonarqube_reports"
     
-    # Keep only the required schema columns with correct datatypes
+    # Keep the required schema columns with correct datatypes
     timestamp = Column(DateTime, nullable=False)
     repository_key = Column(Text, nullable=False, index=True)
     code_smells = Column(Integer, nullable=False)
     technical_debt_minutes = Column(Float, nullable=False)
     security_hotspots = Column(Integer, nullable=False)
     security_rating = Column(Integer, nullable=False)
+    team = Column(Text, nullable=True)
     
     # Use a composite primary key
     __table_args__ = (
@@ -68,6 +69,7 @@ class SonarQubeReportResponse(BaseModel):
     technical_debt_minutes: float
     security_hotspots: int
     security_rating: int
+    team: Optional[str] = None
     
     class Config:
         orm_mode = True
@@ -86,19 +88,24 @@ app = FastAPI(title="SonarQube Report API")
 @app.get("/reports", response_model=List[SonarQubeReportResponse])
 def read_reports(
     repository_key: Optional[str] = Query(None, description="Filter by repository key"),
+    team: Optional[str] = Query(None, description="Filter by team name"),
     sort_order: str = Query("desc", description="Sort order for timestamp (asc or desc)"),
     limit: int = Query(100, ge=1, le=1000, description="Number of records to return"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     db: Session = Depends(get_db)
 ):
     try:
-        logger.info(f"Fetching reports with filter: repository_key={repository_key}, sort_order={sort_order}, limit={limit}, skip={skip}")
+        logger.info(f"Fetching reports with filters: repository_key={repository_key}, team={team}, sort_order={sort_order}, limit={limit}, skip={skip}")
         
         query = db.query(SonarQubeReport)
         
         # Apply repository_key filter if provided
         if repository_key:
             query = query.filter(SonarQubeReport.repository_key == repository_key)
+        
+        # Apply team filter if provided
+        if team:
+            query = query.filter(SonarQubeReport.team == team)
         
         # Apply sorting by timestamp
         if sort_order.lower() == "asc":
@@ -110,7 +117,7 @@ def read_reports(
         reports = query.offset(skip).limit(limit).all()
         
         if not reports:
-            logger.warning(f"No reports found for the given filter: repository_key={repository_key}")
+            logger.warning(f"No reports found for the given filters: repository_key={repository_key}, team={team}")
             return []
         
         logger.info(f"Successfully fetched {len(reports)} reports")
@@ -141,7 +148,7 @@ def root():
         "name": "SonarQube Reports API",
         "version": "1.0.0",
         "endpoints": {
-            "/reports": "Get SonarQube reports with filtering by repository_key and sorting by timestamp",
+            "/reports": "Get SonarQube reports with filtering by repository_key, team and sorting by timestamp",
             "/health": "Check API health status"
         }
     }
