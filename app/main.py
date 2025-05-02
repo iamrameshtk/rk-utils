@@ -7,7 +7,7 @@ from typing import List, Optional
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Depends
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, String, Float, DateTime, Integer, PrimaryKeyConstraint, Text, desc
+from sqlalchemy import create_engine, Column, String, Float, DateTime, Integer, PrimaryKeyConstraint, Text, desc, or_
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 
@@ -44,14 +44,14 @@ Base = declarative_base()
 class SonarQubeReport(Base):
     __tablename__ = "sonarqube_reports"
     
-    # Keep the required schema columns with correct datatypes
+    # Schema columns with correct datatypes
     timestamp = Column(DateTime, nullable=False)
     repository_key = Column(Text, nullable=False, index=True)
     code_smells = Column(Integer, nullable=False)
     technical_debt_minutes = Column(Float, nullable=False)
     security_hotspots = Column(Integer, nullable=False)
     security_rating = Column(Integer, nullable=False)
-    team = Column(Text, nullable=True)
+    team = Column(Text, nullable=True, index=True)  # Added index for faster team filtering
     
     # Use a composite primary key
     __table_args__ = (
@@ -88,7 +88,7 @@ app = FastAPI(title="SonarQube Report API")
 @app.get("/reports", response_model=List[SonarQubeReportResponse])
 def read_reports(
     repository_key: Optional[str] = Query(None, description="Filter by repository key"),
-    team: Optional[str] = Query(None, description="Filter by team name"),
+    team: Optional[str] = Query(None, description="Filter by team name (e.g. Team-A, Team-B, Team-C)"),
     sort_order: str = Query("desc", description="Sort order for timestamp (asc or desc)"),
     limit: int = Query(100, ge=1, le=1000, description="Number of records to return"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
@@ -103,15 +103,38 @@ def read_reports(
         if repository_key:
             query = query.filter(SonarQubeReport.repository_key == repository_key)
         
-        # Apply team filter if provided
+        # Apply team filter if provided, with flexible matching
         if team:
-            query = query.filter(SonarQubeReport.team == team)
+            # Try different possible formats of team names in the database
+            team_filters = []
+            
+            # 1. Exact match (e.g., "Team-A")
+            team_filters.append(SonarQubeReport.team == team)
+            
+            # 2. Match with surrounding quotes (e.g., "\"Team-A\"")
+            team_filters.append(SonarQubeReport.team == f'"{team}"')
+            
+            # 3. Match with trimmed spaces
+            team_filters.append(SonarQubeReport.team == team.strip())
+            
+            # 4. Case insensitive match
+            team_filters.append(SonarQubeReport.team.ilike(team))
+            
+            # Combine all filters with OR
+            query = query.filter(or_(*team_filters))
+            
+            # Log the team filter being applied
+            logger.info(f"Applied team filter with variations of '{team}'")
         
         # Apply sorting by timestamp
         if sort_order.lower() == "asc":
             query = query.order_by(SonarQubeReport.timestamp)
         else:
             query = query.order_by(desc(SonarQubeReport.timestamp))
+        
+        # Log the SQL query for debugging (comment out in production)
+        sql_str = str(query.statement.compile(dialect=engine.dialect, compile_kwargs={"literal_binds": True}))
+        logger.debug(f"SQL Query: {sql_str}")
         
         # Apply pagination
         reports = query.offset(skip).limit(limit).all()
@@ -125,6 +148,21 @@ def read_reports(
     
     except Exception as e:
         logger.error(f"Error fetching reports: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.get("/teams", response_model=List[str])
+def get_teams(db: Session = Depends(get_db)):
+    """Get a list of all unique team names in the database"""
+    try:
+        # Query distinct team values
+        teams_query = db.query(SonarQubeReport.team).distinct().filter(SonarQubeReport.team.isnot(None))
+        teams = [team[0] for team in teams_query.all()]
+        
+        logger.info(f"Successfully fetched {len(teams)} unique team names")
+        return teams
+    
+    except Exception as e:
+        logger.error(f"Error fetching teams: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/health")
@@ -149,6 +187,7 @@ def root():
         "version": "1.0.0",
         "endpoints": {
             "/reports": "Get SonarQube reports with filtering by repository_key, team and sorting by timestamp",
+            "/teams": "Get a list of all unique team names in the database",
             "/health": "Check API health status"
         }
     }
