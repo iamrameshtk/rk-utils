@@ -22,11 +22,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Get database connection from environment variables
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", 
-    "postgresql://username:password@localhost:5432/sonarqube_db"
-)
+# Get database connection parameters from environment variables
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_USER = os.getenv("DB_USER", "username")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "password")
+DB_NAME = os.getenv("DB_NAME", "sonarqube_db")
+
+# Construct the database URL
+DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+# Log database connection (without password)
+logger.info(f"Connecting to database at {DB_HOST}:{DB_PORT}/{DB_NAME} as {DB_USER}")
 
 # Create SQLAlchemy engine and session
 engine = create_engine(DATABASE_URL)
