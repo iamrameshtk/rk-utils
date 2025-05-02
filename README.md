@@ -20,6 +20,17 @@ A FastAPI microservice that retrieves SonarQube static analysis data from a Post
 6. Create database tables: `python scripts/create_tables.py`
 7. (Optional) Add sample data: `python scripts/seed_data.py`
 
+## Database Options
+
+This application supports both PostgreSQL and SQLite:
+
+- **PostgreSQL (Production)**: Set `ENV=production` in your environment variables
+- **SQLite (Development)**: This is the default and requires no additional setup
+
+If you encounter issues installing `psycopg2-binary`, consider:
+
+1. Installing PostgreSQL development libraries first:
+
 ## Running the API
 
 ```bash
