@@ -7,7 +7,7 @@ from typing import List, Optional
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Depends
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
+from sqlalchemy import create_engine, Column, String, Float, DateTime, Integer, PrimaryKeyConstraint, Text, desc
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 
@@ -33,17 +33,22 @@ engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# Define database model
+# Define database model with the specified datatypes
 class SonarQubeReport(Base):
     __tablename__ = "sonarqube_reports"
     
-    id = Column(Integer, primary_key=True, index=True)
+    # Keep only the required schema columns with correct datatypes
     timestamp = Column(DateTime, nullable=False)
-    repository_key = Column(String, nullable=False, index=True)
+    repository_key = Column(Text, nullable=False, index=True)
     code_smells = Column(Integer, nullable=False)
-    technical_debt_minutes = Column(Integer, nullable=False)
+    technical_debt_minutes = Column(Float, nullable=False)
     security_hotspots = Column(Integer, nullable=False)
-    security_rating = Column(Float, nullable=False)
+    security_rating = Column(Integer, nullable=False)
+    
+    # Use a composite primary key
+    __table_args__ = (
+        PrimaryKeyConstraint('timestamp', 'repository_key'),
+    )
 
 # Create tables in the database if they don't exist
 Base.metadata.create_all(bind=engine)
@@ -53,9 +58,9 @@ class SonarQubeReportResponse(BaseModel):
     timestamp: datetime
     repository_key: str
     code_smells: int
-    technical_debt_minutes: int
+    technical_debt_minutes: float
     security_hotspots: int
-    security_rating: float
+    security_rating: int
     
     class Config:
         orm_mode = True
@@ -74,18 +79,27 @@ app = FastAPI(title="SonarQube Report API")
 @app.get("/reports", response_model=List[SonarQubeReportResponse])
 def read_reports(
     repository_key: Optional[str] = Query(None, description="Filter by repository key"),
+    sort_order: str = Query("desc", description="Sort order for timestamp (asc or desc)"),
     limit: int = Query(100, ge=1, le=1000, description="Number of records to return"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     db: Session = Depends(get_db)
 ):
     try:
-        logger.info(f"Fetching reports with filter: repository_key={repository_key}, limit={limit}, skip={skip}")
+        logger.info(f"Fetching reports with filter: repository_key={repository_key}, sort_order={sort_order}, limit={limit}, skip={skip}")
         
         query = db.query(SonarQubeReport)
         
+        # Apply repository_key filter if provided
         if repository_key:
             query = query.filter(SonarQubeReport.repository_key == repository_key)
         
+        # Apply sorting by timestamp
+        if sort_order.lower() == "asc":
+            query = query.order_by(SonarQubeReport.timestamp)
+        else:
+            query = query.order_by(desc(SonarQubeReport.timestamp))
+        
+        # Apply pagination
         reports = query.offset(skip).limit(limit).all()
         
         if not reports:
@@ -120,7 +134,7 @@ def root():
         "name": "SonarQube Reports API",
         "version": "1.0.0",
         "endpoints": {
-            "/reports": "Get SonarQube reports with optional filtering",
+            "/reports": "Get SonarQube reports with filtering by repository_key and sorting by timestamp",
             "/health": "Check API health status"
         }
     }
