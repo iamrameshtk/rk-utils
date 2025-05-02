@@ -7,7 +7,7 @@ from typing import List, Optional
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Depends
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, MetaData, Table, select
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 
@@ -71,7 +71,7 @@ def get_db():
 # Initialize FastAPI app
 app = FastAPI(title="SonarQube Report API")
 
-@app.get("/", response_model=List[SonarQubeReportResponse])
+@app.get("/reports", response_model=List[SonarQubeReportResponse])
 def read_reports(
     repository_key: Optional[str] = Query(None, description="Filter by repository key"),
     limit: int = Query(100, ge=1, le=1000, description="Number of records to return"),
@@ -104,12 +104,26 @@ def health_check():
     try:
         # Simple health check - verify database connection
         with SessionLocal() as db:
-            db.execute("SELECT 1")
-        return {"status": "healthy"}
+            result = db.execute("SELECT 1").fetchone()
+            if not result:
+                raise Exception("Database query failed")
+        return {"status": "healthy", "database": "connected"}
     
     except Exception as e:
         logger.error(f"Health check failed: {str(e)}", exc_info=True)
         raise HTTPException(status_code=503, detail="Service unhealthy")
+
+@app.get("/")
+def root():
+    """Root endpoint to provide API information"""
+    return {
+        "name": "SonarQube Reports API",
+        "version": "1.0.0",
+        "endpoints": {
+            "/reports": "Get SonarQube reports with optional filtering",
+            "/health": "Check API health status"
+        }
+    }
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
