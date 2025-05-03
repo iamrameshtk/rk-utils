@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query, Depends
+from fastapi import FastAPI, HTTPException, Query, Depends, APIRouter
 from pydantic import BaseModel
 from sqlalchemy import Column, String, Float, DateTime, Integer, Text, desc, or_, func
 from sqlalchemy.orm import Session
@@ -27,6 +27,7 @@ class GitHubData(Base):
     id = Column(Integer, primary_key=True)
     username = Column(Text, nullable=False, index=True)
     org_name = Column(Text, nullable=False, index=True)
+    team_name = Column(Text, nullable=True, index=True)  # Added team_name column
     repository_name = Column(Text, nullable=False, index=True)
     pull_request_link = Column(Text, nullable=False)
     title = Column(Text, nullable=False)
@@ -51,6 +52,7 @@ class GitHubDataResponse(BaseModel):
     id: int
     username: str
     org_name: str
+    team_name: Optional[str] = None  # Added team_name field
     repository_name: str
     pull_request_link: str
     title: str
@@ -78,25 +80,39 @@ def get_db():
     finally:
         db.close()
 
-# Initialize FastAPI app
-app = FastAPI(title="GitHub Data API")
+# Create APIRouter for Swagger documentation
+router = APIRouter(tags=["GitHub"])
 
-@app.get("/reports", response_model=List[GitHubDataResponse])
+@router.get("/reports", response_model=List[GitHubDataResponse])
 def read_reports(
     username: Optional[str] = Query(None, description="Filter by GitHub username"),
     org_name: Optional[str] = Query(None, description="Filter by organization name"),
+    team_name: Optional[str] = Query(None, description="Filter by team name"),  # Added team_name filter
     repository_name: Optional[str] = Query(None, description="Filter by repository name"),
     start_date: Optional[datetime] = Query(None, description="Filter by start date (format: YYYY-MM-DD)"),
     end_date: Optional[datetime] = Query(None, description="Filter by end date (format: YYYY-MM-DD)"),
     date_range: Optional[str] = Query(None, description="Predefined date range (today, yesterday, this_week, last_week, this_month, last_month, this_year, custom)"),
-    sort_by: str = Query("created_at", description="Field to sort by (created_at, total_commits, total_reviews)"),
+    sort_by: str = Query("created_at", description="Field to sort by (created_at, team_name, total_commits, total_reviews)"),  # Added team_name sorting
     sort_order: str = Query("desc", description="Sort order (asc or desc)"),
     limit: int = Query(100, ge=1, le=1000, description="Number of records to return"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     db: Session = Depends(get_db)
 ):
+    """
+    Get GitHub pull request data with comprehensive filtering options.
+    
+    Examples:
+    - Get all reports: /github/reports
+    - Filter by team: /github/reports?team_name=Team-A
+    - Filter by organization: /github/reports?org_name=Acme
+    - Filter by repository: /github/reports?repository_name=backend-service
+    - Filter by date range: /github/reports?date_range=this_month
+    - Filter by custom dates: /github/reports?start_date=2025-04-01&end_date=2025-04-30
+    - Sort by commits: /github/reports?sort_by=total_commits&sort_order=desc
+    - Combined filtering: /github/reports?team_name=Team-A&date_range=last_week&sort_by=total_commits
+    """
     try:
-        logger.info(f"Fetching reports with filters: username={username}, org_name={org_name}, repository_name={repository_name}, date_range={date_range}")
+        logger.info(f"Fetching reports with filters: username={username}, org_name={org_name}, team_name={team_name}, repository_name={repository_name}, date_range={date_range}")
         
         query = db.query(GitHubData)
         
@@ -106,6 +122,29 @@ def read_reports(
         
         if org_name:
             query = query.filter(GitHubData.org_name == org_name)
+        
+        # Added team_name filter with flexible matching
+        if team_name:
+            # Try different possible formats of team names in the database
+            team_filters = []
+            
+            # 1. Exact match (e.g., "Team-A")
+            team_filters.append(GitHubData.team_name == team_name)
+            
+            # 2. Match with surrounding quotes (e.g., "\"Team-A\"")
+            team_filters.append(GitHubData.team_name == f'"{team_name}"')
+            
+            # 3. Match with trimmed spaces
+            team_filters.append(GitHubData.team_name == team_name.strip())
+            
+            # 4. Case insensitive match
+            team_filters.append(GitHubData.team_name.ilike(team_name))
+            
+            # Combine all filters with OR
+            query = query.filter(or_(*team_filters))
+            
+            # Log the team filter being applied
+            logger.info(f"Applied team filter with variations of '{team_name}'")
         
         if repository_name:
             query = query.filter(GitHubData.repository_name == repository_name)
@@ -164,9 +203,11 @@ def read_reports(
             next_day = end_date + timedelta(days=1)
             query = query.filter(GitHubData.created_at < next_day)
         
-        # Apply sorting
+        # Apply sorting - added team_name sorting option
         if sort_by == "created_at":
             sort_field = GitHubData.created_at
+        elif sort_by == "team_name":
+            sort_field = GitHubData.team_name
         elif sort_by == "total_commits":
             sort_field = GitHubData.total_commits
         elif sort_by == "total_reviews":
@@ -197,27 +238,60 @@ def read_reports(
         logger.error(f"Error fetching reports: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@app.get("/teams", response_model=List[str])
+@router.get("/teams", response_model=List[str])
 def get_teams(db: Session = Depends(get_db)):
-    """Get a list of all unique organization names in the database (equivalent to teams)"""
+    """
+    Get a list of all unique team names in the database.
+    
+    Example:
+    - Get all teams: /github/teams
+    """
     try:
-        # Query distinct organization values
-        orgs_query = db.query(GitHubData.org_name).distinct()
-        organizations = [org[0] for org in orgs_query.all()]
+        # Query distinct team_name values
+        teams_query = db.query(GitHubData.team_name).distinct().filter(GitHubData.team_name.isnot(None))
+        teams = [team[0] for team in teams_query.all()]
         
-        logger.info(f"Successfully fetched {len(organizations)} unique team names")
-        return organizations
+        logger.info(f"Successfully fetched {len(teams)} unique team names")
+        return teams
     
     except Exception as e:
         logger.error(f"Error fetching teams: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@app.get("/repositories", response_model=List[str])
+@router.get("/organizations", response_model=List[str])
+def get_organizations(db: Session = Depends(get_db)):
+    """
+    Get a list of all unique organization names in the database.
+    
+    Example:
+    - Get all organizations: /github/organizations
+    """
+    try:
+        # Query distinct organization values
+        orgs_query = db.query(GitHubData.org_name).distinct()
+        organizations = [org[0] for org in orgs_query.all()]
+        
+        logger.info(f"Successfully fetched {len(organizations)} unique organization names")
+        return organizations
+    
+    except Exception as e:
+        logger.error(f"Error fetching organizations: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@router.get("/repositories", response_model=List[str])
 def get_repositories(
     org_name: Optional[str] = Query(None, description="Filter by organization name"),
+    team_name: Optional[str] = Query(None, description="Filter by team name"),  # Added team_name filter
     db: Session = Depends(get_db)
 ):
-    """Get a list of all unique repository names in the database"""
+    """
+    Get a list of all unique repository names with optional filtering.
+    
+    Examples:
+    - Get all repositories: /github/repositories
+    - Filter by organization: /github/repositories?org_name=Acme
+    - Filter by team: /github/repositories?team_name=Team-A
+    """
     try:
         # Query distinct repository values
         repos_query = db.query(GitHubData.repository_name).distinct()
@@ -225,6 +299,10 @@ def get_repositories(
         # Apply org filter if provided
         if org_name:
             repos_query = repos_query.filter(GitHubData.org_name == org_name)
+        
+        # Apply team filter if provided
+        if team_name:
+            repos_query = repos_query.filter(GitHubData.team_name == team_name)
         
         repositories = [repo[0] for repo in repos_query.all()]
         
@@ -235,13 +313,23 @@ def get_repositories(
         logger.error(f"Error fetching repositories: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@app.get("/users", response_model=List[str])
+@router.get("/users", response_model=List[str])
 def get_users(
     org_name: Optional[str] = Query(None, description="Filter by organization name"),
+    team_name: Optional[str] = Query(None, description="Filter by team name"),  # Added team_name filter
     repository_name: Optional[str] = Query(None, description="Filter by repository name"),
     db: Session = Depends(get_db)
 ):
-    """Get a list of all unique usernames in the database with optional filtering"""
+    """
+    Get a list of all unique usernames with optional filtering.
+    
+    Examples:
+    - Get all users: /github/users
+    - Filter by organization: /github/users?org_name=Acme
+    - Filter by team: /github/users?team_name=Team-A
+    - Filter by repository: /github/users?repository_name=backend-service
+    - Combined filters: /github/users?team_name=Team-A&repository_name=backend-service
+    """
     try:
         # Query distinct username values
         users_query = db.query(GitHubData.username).distinct()
@@ -249,6 +337,9 @@ def get_users(
         # Apply filters if provided
         if org_name:
             users_query = users_query.filter(GitHubData.org_name == org_name)
+        
+        if team_name:
+            users_query = users_query.filter(GitHubData.team_name == team_name)
         
         if repository_name:
             users_query = users_query.filter(GitHubData.repository_name == repository_name)
@@ -262,8 +353,14 @@ def get_users(
         logger.error(f"Error fetching users: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@app.get("/health")
+@router.get("/health")
 def health_check():
+    """
+    Check the health status of the GitHub API and database connection.
+    
+    Example:
+    - Check health: /github/health
+    """
     try:
         # Simple health check - verify database connection
         with SessionLocal() as db:
@@ -276,20 +373,27 @@ def health_check():
         logger.error(f"Health check failed: {str(e)}", exc_info=True)
         raise HTTPException(status_code=503, detail="Service unhealthy")
 
-@app.get("/")
+@router.get("/")
 def root():
-    """Root endpoint to provide API information"""
+    """Root endpoint to provide GitHub API information"""
     return {
         "name": "GitHub Data API",
         "version": "1.0.0",
         "endpoints": {
-            "/reports": "Get GitHub pull request data with filtering by username, org_name, repository_name, date range and sorting",
-            "/teams": "Get a list of all unique organization names (teams)",
+            "/reports": "Get GitHub pull request data with filtering by username, org_name, team_name, repository_name, date range and sorting",
+            "/teams": "Get a list of all unique team names",
+            "/organizations": "Get a list of all unique organization names",
             "/repositories": "Get a list of all unique repository names",
             "/users": "Get a list of all unique usernames with optional filtering",
             "/health": "Check API health status"
         }
     }
+
+# Initialize FastAPI app
+app = FastAPI(title="GitHub Data API")
+
+# Include the router in the app
+app.include_router(router)
 
 if __name__ == "__main__":
     # This will only be used when running the file directly, not when mounted in server.py

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import List, Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query, Depends
+from fastapi import FastAPI, HTTPException, Query, Depends, APIRouter
 from pydantic import BaseModel
 from sqlalchemy import Column, String, Float, DateTime, Integer, PrimaryKeyConstraint, Text, desc, or_
 from sqlalchemy.orm import Session
@@ -61,10 +61,10 @@ def get_db():
     finally:
         db.close()
 
-# Initialize FastAPI app
-app = FastAPI(title="SonarQube Report API")
+# Create APIRouter for Swagger documentation
+router = APIRouter(tags=["SonarQube"])
 
-@app.get("/reports", response_model=List[SonarQubeReportResponse])
+@router.get("/reports", response_model=List[SonarQubeReportResponse])
 def read_reports(
     repository_key: Optional[str] = Query(None, description="Filter by repository key"),
     team: Optional[str] = Query(None, description="Filter by team name (e.g. Team-A, Team-B, Team-C)"),
@@ -73,6 +73,15 @@ def read_reports(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     db: Session = Depends(get_db)
 ):
+    """
+    Get SonarQube reports with filtering by repository_key, team, and sorting by timestamp.
+    
+    Examples:
+    - Get all reports: /sonarqube/reports
+    - Filter by team: /sonarqube/reports?team=Team-A
+    - Filter by repository: /sonarqube/reports?repository_key=my-project
+    - Sorting and pagination: /sonarqube/reports?team=Team-A&sort_order=desc&limit=10&skip=20
+    """
     try:
         logger.info(f"Fetching reports with filters: repository_key={repository_key}, team={team}, sort_order={sort_order}, limit={limit}, skip={skip}")
         
@@ -129,9 +138,14 @@ def read_reports(
         logger.error(f"Error fetching reports: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@app.get("/teams", response_model=List[str])
+@router.get("/teams", response_model=List[str])
 def get_teams(db: Session = Depends(get_db)):
-    """Get a list of all unique team names in the database"""
+    """
+    Get a list of all unique team names in the database.
+    
+    Example:
+    - Get all teams: /sonarqube/teams
+    """
     try:
         # Query distinct team values
         teams_query = db.query(SonarQubeReport.team).distinct().filter(SonarQubeReport.team.isnot(None))
@@ -144,8 +158,14 @@ def get_teams(db: Session = Depends(get_db)):
         logger.error(f"Error fetching teams: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@app.get("/health")
+@router.get("/health")
 def health_check():
+    """
+    Check the health status of the SonarQube API and database connection.
+    
+    Example:
+    - Check health: /sonarqube/health
+    """
     try:
         # Simple health check - verify database connection
         with SessionLocal() as db:
@@ -158,9 +178,9 @@ def health_check():
         logger.error(f"Health check failed: {str(e)}", exc_info=True)
         raise HTTPException(status_code=503, detail="Service unhealthy")
 
-@app.get("/")
+@router.get("/")
 def root():
-    """Root endpoint to provide API information"""
+    """Root endpoint to provide SonarQube API information"""
     return {
         "name": "SonarQube Reports API",
         "version": "1.0.0",
@@ -170,6 +190,12 @@ def root():
             "/health": "Check API health status"
         }
     }
+
+# Initialize FastAPI app
+app = FastAPI(title="SonarQube Report API")
+
+# Include the router in the app
+app.include_router(router)
 
 if __name__ == "__main__":
     # This will only be used when running the file directly, not when mounted in server.py
