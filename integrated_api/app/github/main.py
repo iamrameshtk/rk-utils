@@ -1,6 +1,6 @@
 # app/github/main.py
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 import uvicorn
@@ -70,31 +70,6 @@ class GitHubDataResponse(BaseModel):
     class Config:
         orm_mode = True
 
-# Pydantic model for summary stats
-class RepositorySummary(BaseModel):
-    repository_name: str
-    pull_request_count: int
-    total_commits: int
-    passing_commits: int
-    failing_commits: int
-    avg_changes_per_commit: float
-    
-    class Config:
-        orm_mode = True
-
-# Pydantic model for user stats
-class UserStats(BaseModel):
-    username: str
-    total_pull_requests: int
-    total_commits: int
-    passing_commits_ratio: float
-    avg_changes_per_commit: float
-    reviews_given: int
-    reviews_received: int
-    
-    class Config:
-        orm_mode = True
-
 # Dependency to get database session
 def get_db():
     db = SessionLocal()
@@ -106,11 +81,14 @@ def get_db():
 # Initialize FastAPI app
 app = FastAPI(title="GitHub Data API")
 
-@app.get("/pull-requests", response_model=List[GitHubDataResponse])
-def read_pull_requests(
+@app.get("/reports", response_model=List[GitHubDataResponse])
+def read_reports(
     username: Optional[str] = Query(None, description="Filter by GitHub username"),
     org_name: Optional[str] = Query(None, description="Filter by organization name"),
     repository_name: Optional[str] = Query(None, description="Filter by repository name"),
+    start_date: Optional[datetime] = Query(None, description="Filter by start date (format: YYYY-MM-DD)"),
+    end_date: Optional[datetime] = Query(None, description="Filter by end date (format: YYYY-MM-DD)"),
+    date_range: Optional[str] = Query(None, description="Predefined date range (today, yesterday, this_week, last_week, this_month, last_month, this_year, custom)"),
     sort_by: str = Query("created_at", description="Field to sort by (created_at, total_commits, total_reviews)"),
     sort_order: str = Query("desc", description="Sort order (asc or desc)"),
     limit: int = Query(100, ge=1, le=1000, description="Number of records to return"),
@@ -118,7 +96,7 @@ def read_pull_requests(
     db: Session = Depends(get_db)
 ):
     try:
-        logger.info(f"Fetching pull requests with filters: username={username}, org_name={org_name}, repository_name={repository_name}")
+        logger.info(f"Fetching reports with filters: username={username}, org_name={org_name}, repository_name={repository_name}, date_range={date_range}")
         
         query = db.query(GitHubData)
         
@@ -131,6 +109,60 @@ def read_pull_requests(
         
         if repository_name:
             query = query.filter(GitHubData.repository_name == repository_name)
+        
+        # Apply date filters
+        if date_range:
+            today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            
+            if date_range == "today":
+                tomorrow = today + timedelta(days=1)
+                query = query.filter(GitHubData.created_at >= today, GitHubData.created_at < tomorrow)
+            
+            elif date_range == "yesterday":
+                yesterday = today - timedelta(days=1)
+                query = query.filter(GitHubData.created_at >= yesterday, GitHubData.created_at < today)
+            
+            elif date_range == "this_week":
+                # Get start of the week (Monday)
+                start_of_week = today - timedelta(days=today.weekday())
+                query = query.filter(GitHubData.created_at >= start_of_week)
+            
+            elif date_range == "last_week":
+                # Get start of the last week and end of the last week
+                start_of_this_week = today - timedelta(days=today.weekday())
+                start_of_last_week = start_of_this_week - timedelta(days=7)
+                query = query.filter(GitHubData.created_at >= start_of_last_week, GitHubData.created_at < start_of_this_week)
+            
+            elif date_range == "this_month":
+                # Get start of the month
+                start_of_month = today.replace(day=1)
+                query = query.filter(GitHubData.created_at >= start_of_month)
+            
+            elif date_range == "last_month":
+                # Get start of this month and last month
+                start_of_this_month = today.replace(day=1)
+                # Go back one month and get the first day
+                if start_of_this_month.month == 1:
+                    start_of_last_month = start_of_this_month.replace(year=start_of_this_month.year-1, month=12)
+                else:
+                    start_of_last_month = start_of_this_month.replace(month=start_of_this_month.month-1)
+                
+                query = query.filter(GitHubData.created_at >= start_of_last_month, GitHubData.created_at < start_of_this_month)
+            
+            elif date_range == "this_year":
+                start_of_year = today.replace(month=1, day=1)
+                query = query.filter(GitHubData.created_at >= start_of_year)
+            
+            # If custom range, the start_date and end_date parameters should be used
+        
+        # Apply explicit date range filters if provided (these override the predefined ranges)
+        if start_date:
+            query = query.filter(GitHubData.created_at >= start_date)
+        
+        if end_date:
+            # Add one day to include the end date fully
+            next_day = end_date + timedelta(days=1)
+            query = query.filter(GitHubData.created_at < next_day)
         
         # Apply sorting
         if sort_by == "created_at":
@@ -152,17 +184,32 @@ def read_pull_requests(
         logger.debug(f"SQL Query: {sql_str}")
         
         # Apply pagination
-        pull_requests = query.offset(skip).limit(limit).all()
+        reports = query.offset(skip).limit(limit).all()
         
-        if not pull_requests:
-            logger.warning(f"No pull requests found for the given filters")
+        if not reports:
+            logger.warning(f"No reports found for the given filters")
             return []
         
-        logger.info(f"Successfully fetched {len(pull_requests)} pull requests")
-        return pull_requests
+        logger.info(f"Successfully fetched {len(reports)} reports")
+        return reports
     
     except Exception as e:
-        logger.error(f"Error fetching pull requests: {str(e)}", exc_info=True)
+        logger.error(f"Error fetching reports: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.get("/teams", response_model=List[str])
+def get_teams(db: Session = Depends(get_db)):
+    """Get a list of all unique organization names in the database (equivalent to teams)"""
+    try:
+        # Query distinct organization values
+        orgs_query = db.query(GitHubData.org_name).distinct()
+        organizations = [org[0] for org in orgs_query.all()]
+        
+        logger.info(f"Successfully fetched {len(organizations)} unique team names")
+        return organizations
+    
+    except Exception as e:
+        logger.error(f"Error fetching teams: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/repositories", response_model=List[str])
@@ -186,21 +233,6 @@ def get_repositories(
     
     except Exception as e:
         logger.error(f"Error fetching repositories: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-@app.get("/organizations", response_model=List[str])
-def get_organizations(db: Session = Depends(get_db)):
-    """Get a list of all unique organization names in the database"""
-    try:
-        # Query distinct organization values
-        orgs_query = db.query(GitHubData.org_name).distinct()
-        organizations = [org[0] for org in orgs_query.all()]
-        
-        logger.info(f"Successfully fetched {len(organizations)} unique organization names")
-        return organizations
-    
-    except Exception as e:
-        logger.error(f"Error fetching organizations: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/users", response_model=List[str])
@@ -230,111 +262,6 @@ def get_users(
         logger.error(f"Error fetching users: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@app.get("/repository-summary", response_model=List[RepositorySummary])
-def get_repository_summary(
-    org_name: Optional[str] = Query(None, description="Filter by organization name"),
-    db: Session = Depends(get_db)
-):
-    """Get summary statistics for repositories"""
-    try:
-        # Create a subquery to group by repository_name
-        query = db.query(
-            GitHubData.repository_name,
-            func.count(GitHubData.id).label("pull_request_count"),
-            func.sum(GitHubData.total_commits).label("total_commits"),
-            func.sum(GitHubData.passing_commits).label("passing_commits"),
-            func.sum(GitHubData.failing_commits).label("failing_commits"),
-            func.avg(GitHubData.changes_per_commit).label("avg_changes_per_commit")
-        ).group_by(GitHubData.repository_name)
-        
-        # Apply org filter if provided
-        if org_name:
-            query = query.filter(GitHubData.org_name == org_name)
-        
-        # Execute the query
-        results = query.all()
-        
-        # Convert query results to response model
-        summary_list = []
-        for row in results:
-            summary = RepositorySummary(
-                repository_name=row.repository_name,
-                pull_request_count=row.pull_request_count,
-                total_commits=row.total_commits,
-                passing_commits=row.passing_commits,
-                failing_commits=row.failing_commits,
-                avg_changes_per_commit=row.avg_changes_per_commit
-            )
-            summary_list.append(summary)
-        
-        logger.info(f"Successfully generated summary for {len(summary_list)} repositories")
-        return summary_list
-    
-    except Exception as e:
-        logger.error(f"Error generating repository summary: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-@app.get("/user-stats", response_model=List[UserStats])
-def get_user_stats(
-    org_name: Optional[str] = Query(None, description="Filter by organization name"),
-    repository_name: Optional[str] = Query(None, description="Filter by repository name"),
-    db: Session = Depends(get_db)
-):
-    """Get statistics for users' GitHub activity"""
-    try:
-        # Create a query to group by username
-        query = db.query(
-            GitHubData.username,
-            func.count(GitHubData.id).label("total_pull_requests"),
-            func.sum(GitHubData.total_commits).label("total_commits"),
-            (func.sum(GitHubData.passing_commits) / func.sum(GitHubData.total_commits)).label("passing_commits_ratio"),
-            func.avg(GitHubData.changes_per_commit).label("avg_changes_per_commit"),
-            func.sum(
-                GitHubData.approved_reviews_given + 
-                GitHubData.changes_requested_reviews_given + 
-                GitHubData.commented_reviews_given
-            ).label("reviews_given"),
-            func.sum(
-                GitHubData.approved_reviews_received + 
-                GitHubData.changes_requested_reviews_received + 
-                GitHubData.commented_reviews_received
-            ).label("reviews_received")
-        ).group_by(GitHubData.username)
-        
-        # Apply filters if provided
-        if org_name:
-            query = query.filter(GitHubData.org_name == org_name)
-        
-        if repository_name:
-            query = query.filter(GitHubData.repository_name == repository_name)
-        
-        # Execute the query
-        results = query.all()
-        
-        # Convert query results to response model
-        stats_list = []
-        for row in results:
-            # Handle division by zero for passing_commits_ratio
-            passing_ratio = row.passing_commits_ratio if row.passing_commits_ratio is not None else 0.0
-            
-            stats = UserStats(
-                username=row.username,
-                total_pull_requests=row.total_pull_requests,
-                total_commits=row.total_commits,
-                passing_commits_ratio=passing_ratio,
-                avg_changes_per_commit=row.avg_changes_per_commit,
-                reviews_given=row.reviews_given,
-                reviews_received=row.reviews_received
-            )
-            stats_list.append(stats)
-        
-        logger.info(f"Successfully generated stats for {len(stats_list)} users")
-        return stats_list
-    
-    except Exception as e:
-        logger.error(f"Error generating user stats: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
 @app.get("/health")
 def health_check():
     try:
@@ -356,12 +283,10 @@ def root():
         "name": "GitHub Data API",
         "version": "1.0.0",
         "endpoints": {
-            "/pull-requests": "Get GitHub pull request data with various filtering options",
+            "/reports": "Get GitHub pull request data with filtering by username, org_name, repository_name, date range and sorting",
+            "/teams": "Get a list of all unique organization names (teams)",
             "/repositories": "Get a list of all unique repository names",
-            "/organizations": "Get a list of all unique organization names",
             "/users": "Get a list of all unique usernames with optional filtering",
-            "/repository-summary": "Get summary statistics for repositories",
-            "/user-stats": "Get statistics for users' GitHub activity",
             "/health": "Check API health status"
         }
     }
