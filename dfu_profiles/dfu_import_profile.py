@@ -130,7 +130,10 @@ def find_datafusion_instance(project_id, credentials, specified_instance=None, l
         if location:
             parent = f"projects/{project_id}/locations/{location}"
             logger.debug(f"Looking for Data Fusion instances in: {parent}")
-            response = client.list_instances(parent=parent)
+            
+            # Create a proper request object
+            request = data_fusion_v1.ListInstancesRequest(parent=parent)
+            response = client.list_instances(request=request)
             instances = list(response)
             
             if instances:
@@ -153,7 +156,9 @@ def find_datafusion_instance(project_id, credentials, specified_instance=None, l
                 parent = f"projects/{project_id}/locations/{loc}"
                 logger.debug(f"Looking for Data Fusion instances in: {parent}")
                 try:
-                    response = client.list_instances(parent=parent)
+                    # Create a proper request object
+                    request = data_fusion_v1.ListInstancesRequest(parent=parent)
+                    response = client.list_instances(request=request)
                     instances = list(response)
                     
                     if instances:
@@ -183,10 +188,15 @@ def get_datafusion_api_endpoint(project_id, location, instance_name, credentials
         # Create a Data Fusion client
         client = data_fusion_v1.DataFusionClient(credentials=credentials)
         
-        # Get instance details
-        name = f"projects/{project_id}/locations/{location}/instances/{instance_name}"
-        logger.debug(f"Getting Data Fusion instance details for: {name}")
-        instance = client.get_instance(name=name)
+        # Create a proper instance request
+        instance_path = f"projects/{project_id}/locations/{location}/instances/{instance_name}"
+        request = data_fusion_v1.GetInstanceRequest(
+            name=instance_path
+        )
+        
+        # Get instance details using the request object
+        logger.debug(f"Getting Data Fusion instance details for: {instance_path}")
+        instance = client.get_instance(request=request)
         
         # Extract and format API endpoint
         api_endpoint = instance.api_endpoint
