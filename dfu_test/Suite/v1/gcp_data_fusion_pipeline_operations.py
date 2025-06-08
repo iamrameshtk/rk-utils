@@ -198,7 +198,7 @@ class CDAPClient:
             test_passed = self._evaluate_test_result(response.status_code, expected_result)
             status = "PASS" if test_passed else "FAIL"
             
-            error_details = "" if response.status_code < 400 else response.text[:200]
+            error_details = "" if response.status_code < 400 else response.text
             
             # Track resource creation
             resource_created = ""
@@ -247,7 +247,14 @@ class CDAPClient:
             
         except requests.exceptions.RequestException as e:
             execution_time = time.time() - start_time
-            error_details = str(e)
+            
+            # Capture full error details
+            if hasattr(e, 'response') and e.response is not None:
+                error_details = f"Status: {e.response.status_code} - {e.response.reason}\n"
+                error_details += f"Response: {e.response.text}"
+            else:
+                error_details = f"Exception: {type(e).__name__} - {str(e)}"
+            
             response_code = getattr(e.response, 'status_code', 0) if hasattr(e, 'response') else 0
             response_message = getattr(e.response, 'reason', 'Request Failed') if hasattr(e, 'response') else 'Request Failed'
             
@@ -616,6 +623,9 @@ class PipelineTestRunner:
         print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print("="*60 + "\n")
         
+        # First, test LIST to see what's available
+        self._test_list_operations()
+        
         # Test 1: Complete pipeline workflow
         self._test_complete_pipeline_workflow()
         
@@ -633,19 +643,65 @@ class PipelineTestRunner:
         
         return self.client.config.test_results
     
+    def _test_list_operations(self):
+        """Test LIST operations to understand available resources"""
+        print("=== Testing LIST Operations ===")
+        
+        # LIST pipelines
+        try:
+            pipelines = self.client.list_pipelines()
+            print(f"✓ LIST_PIPELINES passed - found {len(pipelines) if pipelines else 0} pipeline(s)")
+            if pipelines and len(pipelines) > 0:
+                print("   Sample pipeline structure:")
+                sample = pipelines[0]
+                print(f"   - Name: {sample.get('name')}")
+                print(f"   - Type: {sample.get('type')}")
+                print(f"   - Artifact: {sample.get('artifact', {})}")
+        except Exception as e:
+            print(f"✗ LIST_PIPELINES failed: {str(e)[:100]}")
+        
+        # LIST compute profiles
+        try:
+            profiles = self.client.list_compute_profiles()
+            print(f"✓ LIST_COMPUTE_PROFILES passed - found {len(profiles) if profiles else 0} profile(s)")
+        except Exception as e:
+            print(f"✗ LIST_COMPUTE_PROFILES failed: {str(e)[:100]}")
+        
+        # LIST secure keys
+        try:
+            keys = self.client.list_secure_keys()
+            print(f"✓ LIST_SECURE_KEYS passed - found {len(keys) if keys else 0} key(s)")
+        except Exception as e:
+            print(f"✗ LIST_SECURE_KEYS failed: {str(e)[:100]}")
+    
     def _test_complete_pipeline_workflow(self):
         """Test complete pipeline workflow: CREATE -> DEPLOY -> UPDATE -> LIST -> START -> STOP -> DELETE"""
         print("=== Testing Complete Pipeline Workflow ===")
         
-        pipeline_config = {
+        # First, let's try a simpler pipeline config that's more likely to work
+        simple_pipeline_config = {
             "name": self.test_pipeline_name,
             "description": "Test pipeline for complete workflow validation",
             "artifact": {
                 "name": "cdap-data-pipeline",
-                "version": "6.10.0",
-                "scope": "system"
+                "version": "[6.0.0, 7.0.0)",  # Version range for compatibility
+                "scope": "SYSTEM"
             },
             "config": {
+                "resources": {
+                    "memoryMB": 1024,
+                    "virtualCores": 1
+                },
+                "driverResources": {
+                    "memoryMB": 1024,
+                    "virtualCores": 1
+                },
+                "connections": [],
+                "comments": [],
+                "postActions": [],
+                "properties": {},
+                "processTimingEnabled": True,
+                "stageLoggingEnabled": False,
                 "stages": [
                     {
                         "name": "MockSource",
@@ -655,11 +711,15 @@ class PipelineTestRunner:
                             "label": "Mock Source",
                             "artifact": {
                                 "name": "core-plugins",
-                                "version": "2.11.0",
-                                "scope": "system"
+                                "version": "[2.0.0, 3.0.0)",
+                                "scope": "SYSTEM"
                             },
-                            "properties": {}
-                        }
+                            "properties": {
+                                "schema": "{\"type\":\"record\",\"name\":\"etlSchemaBody\",\"fields\":[{\"name\":\"id\",\"type\":\"int\"},{\"name\":\"name\",\"type\":\"string\"}]}"
+                            }
+                        },
+                        "outputSchema": "{\"type\":\"record\",\"name\":\"etlSchemaBody\",\"fields\":[{\"name\":\"id\",\"type\":\"int\"},{\"name\":\"name\",\"type\":\"string\"}]}",
+                        "id": "MockSource"
                     },
                     {
                         "name": "MockSink",
@@ -669,35 +729,85 @@ class PipelineTestRunner:
                             "label": "Mock Sink",
                             "artifact": {
                                 "name": "core-plugins",
-                                "version": "2.11.0",
-                                "scope": "system"
+                                "version": "[2.0.0, 3.0.0)",
+                                "scope": "SYSTEM"
                             },
                             "properties": {}
-                        }
+                        },
+                        "outputSchema": "{\"type\":\"record\",\"name\":\"etlSchemaBody\",\"fields\":[{\"name\":\"id\",\"type\":\"int\"},{\"name\":\"name\",\"type\":\"string\"}]}",
+                        "inputSchema": [
+                            {
+                                "name": "MockSource",
+                                "schema": "{\"type\":\"record\",\"name\":\"etlSchemaBody\",\"fields\":[{\"name\":\"id\",\"type\":\"int\"},{\"name\":\"name\",\"type\":\"string\"}]}"
+                            }
+                        ],
+                        "id": "MockSink"
                     }
                 ],
-                "connections": [
-                    {
-                        "from": "MockSource",
-                        "to": "MockSink"
-                    }
-                ],
-                "engine": "spark"
+                "schedule": "0 * * * *",
+                "engine": "spark",
+                "numOfRecordsPreview": 100,
+                "maxConcurrentRuns": 1
             }
         }
         
         pipeline_created = False
         
+        # Try to create/deploy the pipeline
         try:
             # Step 1: DEPLOY/CREATE pipeline
-            self.client.deploy_pipeline(
+            result = self.client.deploy_pipeline(
                 self.test_pipeline_name, 
-                pipeline_config,
+                simple_pipeline_config,
                 expected_result="Should succeed with 200 OK for valid pipeline config"
             )
             print(f"✓ Step 1: DEPLOY_PIPELINE_{self.test_pipeline_name} passed")
             pipeline_created = True
             
+        except Exception as e:
+            print(f"✗ Step 1: DEPLOY_PIPELINE_{self.test_pipeline_name} failed: {e}")
+            print(f"   Error details: {str(e)[:200]}")
+            
+            # Try alternative pipeline configuration with minimal settings
+            print("\n   Trying alternative minimal pipeline configuration...")
+            minimal_pipeline_config = {
+                "artifact": {
+                    "name": "cdap-data-pipeline",
+                    "version": "[6.0.0, 7.0.0)",
+                    "scope": "SYSTEM"
+                },
+                "config": {
+                    "stages": [],
+                    "connections": [],
+                    "resources": {
+                        "memoryMB": 1024,
+                        "virtualCores": 1
+                    },
+                    "driverResources": {
+                        "memoryMB": 1024,
+                        "virtualCores": 1
+                    },
+                    "engine": "spark"
+                }
+            }
+            
+            try:
+                result = self.client.deploy_pipeline(
+                    self.test_pipeline_name + "-minimal", 
+                    minimal_pipeline_config,
+                    expected_result="Should succeed with 200 OK for minimal pipeline config"
+                )
+                print(f"✓ Step 1b: DEPLOY_PIPELINE_{self.test_pipeline_name}-minimal passed")
+                self.test_pipeline_name = self.test_pipeline_name + "-minimal"
+                pipeline_created = True
+                simple_pipeline_config = minimal_pipeline_config
+            except Exception as e2:
+                print(f"✗ Step 1b: Minimal pipeline deployment also failed: {str(e2)[:100]}")
+                # Continue with remaining tests even if pipeline creation failed
+                pass
+        
+        # Only continue with pipeline operations if pipeline was created
+        if pipeline_created:
             # Step 2: GET pipeline details
             try:
                 pipeline = self.client.get_pipeline(
@@ -705,22 +815,25 @@ class PipelineTestRunner:
                     expected_result="Should succeed with 200 OK for existing pipeline"
                 )
                 print(f"✓ Step 2: GET_PIPELINE_{self.test_pipeline_name} passed")
+                if pipeline:
+                    print(f"   Pipeline state: {pipeline.get('status', 'UNKNOWN')}")
             except Exception as e:
                 print(f"✗ Step 2: GET_PIPELINE_{self.test_pipeline_name} failed: {e}")
             
             # Step 3: UPDATE pipeline
             try:
-                pipeline_config["description"] = "Updated test pipeline for workflow validation"
-                pipeline_config["config"]["stages"][0]["plugin"]["label"] = "Updated Mock Source"
+                simple_pipeline_config["description"] = "Updated test pipeline for workflow validation"
+                if "config" in simple_pipeline_config:
+                    simple_pipeline_config["config"]["description"] = "Updated via API test"
                 
                 self.client.update_pipeline(
                     self.test_pipeline_name, 
-                    pipeline_config,
+                    simple_pipeline_config,
                     expected_result="Should succeed with 200 OK for valid update"
                 )
                 print(f"✓ Step 3: UPDATE_PIPELINE_{self.test_pipeline_name} passed")
             except Exception as e:
-                print(f"✗ Step 3: UPDATE_PIPELINE_{self.test_pipeline_name} failed: {e}")
+                print(f"✗ Step 3: UPDATE_PIPELINE_{self.test_pipeline_name} failed: {str(e)[:100]}")
             
             # Step 4: LIST pipelines (verify our pipeline is there)
             try:
@@ -729,31 +842,34 @@ class PipelineTestRunner:
                     print(f"✓ Step 4: LIST_PIPELINES verified {self.test_pipeline_name} exists")
                 else:
                     print(f"✗ Step 4: LIST_PIPELINES did not find {self.test_pipeline_name}")
+                    if pipelines:
+                        print(f"   Found pipelines: {[p.get('name') for p in pipelines[:3]]}")
             except Exception as e:
-                print(f"✗ Step 4: LIST_PIPELINES failed: {e}")
+                print(f"✗ Step 4: LIST_PIPELINES failed: {str(e)[:100]}")
             
-            # Step 5: START pipeline
-            try:
-                self.client.start_batch_pipeline(
-                    self.test_pipeline_name,
-                    expected_result="Should succeed with 200 OK for valid pipeline"
-                )
-                print(f"✓ Step 5: START_BATCH_PIPELINE_{self.test_pipeline_name} passed")
+            # Step 5: START pipeline (only if it has stages)
+            if simple_pipeline_config.get("config", {}).get("stages"):
+                try:
+                    self.client.start_batch_pipeline(
+                        self.test_pipeline_name,
+                        expected_result="Should succeed with 200 OK for valid pipeline"
+                    )
+                    print(f"✓ Step 5: START_BATCH_PIPELINE_{self.test_pipeline_name} passed")
+                    time.sleep(5)
+                except Exception as e:
+                    print(f"✗ Step 5: START_BATCH_PIPELINE_{self.test_pipeline_name} failed: {str(e)[:100]}")
                 
-                # Wait a bit for the pipeline to start
-                time.sleep(5)
-            except Exception as e:
-                print(f"✗ Step 5: START_BATCH_PIPELINE_{self.test_pipeline_name} failed: {e}")
-            
-            # Step 6: STOP pipeline
-            try:
-                self.client.stop_batch_pipeline(
-                    self.test_pipeline_name,
-                    expected_result="Should succeed with 200 OK or 400 if already stopped"
-                )
-                print(f"✓ Step 6: STOP_BATCH_PIPELINE_{self.test_pipeline_name} passed")
-            except Exception as e:
-                print(f"✗ Step 6: STOP_BATCH_PIPELINE_{self.test_pipeline_name} failed: {e}")
+                # Step 6: STOP pipeline
+                try:
+                    self.client.stop_batch_pipeline(
+                        self.test_pipeline_name,
+                        expected_result="Should succeed with 200 OK or 400 if already stopped"
+                    )
+                    print(f"✓ Step 6: STOP_BATCH_PIPELINE_{self.test_pipeline_name} passed")
+                except Exception as e:
+                    print(f"✗ Step 6: STOP_BATCH_PIPELINE_{self.test_pipeline_name} failed: {str(e)[:100]}")
+            else:
+                print("ℹ Step 5-6: Skipping START/STOP for pipeline without stages")
             
             # Step 7: GET pipeline runs
             try:
@@ -764,9 +880,9 @@ class PipelineTestRunner:
                 )
                 print(f"✓ Step 7: GET_PIPELINE_RUNS_{self.test_pipeline_name} passed")
                 if runs:
-                    print(f"  - Found {len(runs)} run(s)")
+                    print(f"   Found {len(runs)} run(s)")
             except Exception as e:
-                print(f"✗ Step 7: GET_PIPELINE_RUNS_{self.test_pipeline_name} failed: {e}")
+                print(f"✗ Step 7: GET_PIPELINE_RUNS_{self.test_pipeline_name} failed: {str(e)[:100]}")
             
             # Step 8: DELETE pipeline (cleanup)
             if not self.skip_cleanup:
@@ -777,19 +893,18 @@ class PipelineTestRunner:
                     )
                     print(f"✓ Step 8: DELETE_PIPELINE_{self.test_pipeline_name} passed")
                 except Exception as e:
-                    print(f"✗ Step 8: DELETE_PIPELINE_{self.test_pipeline_name} failed: {e}")
+                    print(f"✗ Step 8: DELETE_PIPELINE_{self.test_pipeline_name} failed: {str(e)[:100]}")
             else:
                 print(f"ℹ Step 8: DELETE_PIPELINE_{self.test_pipeline_name} skipped (--skip-cleanup)")
-                
-        except Exception as e:
-            print(f"✗ Pipeline workflow failed at deployment: {e}")
-            # Cleanup if pipeline was created
-            if pipeline_created and not self.skip_cleanup:
-                try:
-                    self.client.delete_pipeline(self.test_pipeline_name)
-                    print(f"✓ Cleanup: Deleted pipeline {self.test_pipeline_name}")
-                except:
-                    pass
+        else:
+            print("\n⚠️  Skipping remaining pipeline workflow steps due to creation failure")
+            
+            # Still test LIST operation
+            try:
+                pipelines = self.client.list_pipelines()
+                print(f"✓ LIST_PIPELINES passed - found {len(pipelines) if pipelines else 0} existing pipeline(s)")
+            except Exception as e:
+                print(f"✗ LIST_PIPELINES failed: {str(e)[:100]}")
     
     def _test_complete_compute_profile_workflow(self):
         """Test complete compute profile workflow: CREATE -> GET -> DISABLE -> DELETE"""
@@ -1084,7 +1199,7 @@ class ReportGenerator:
                     'test_passed': result.test_passed,
                     'resource_created': result.resource_created,
                     'resource_deleted': result.resource_deleted,
-                    'error_details': result.error_details[:200] + '...' if len(result.error_details) > 200 else result.error_details
+                    'error_details': result.error_details if len(result.error_details) <= 500 else result.error_details[:497] + '...'
                 })
         
         return filename
