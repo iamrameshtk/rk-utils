@@ -22,7 +22,7 @@ Requirements:
 
 Usage:
     export GOOGLE_AUTH_TOKEN=$(gcloud auth print-access-token)
-    python data_fusion_main.py
+    python gcp_data_fusion_cp_and_dp.py
 """
 
 import os
@@ -79,7 +79,7 @@ class CloudDataFusionClient:
             'Content-Type': 'application/json'
         })
     
-    def _make_request(self, method: str, url: str, test_case: str, description: str, operation_type: str = "Instance Level Operation", **kwargs) -> Tuple[requests.Response, TestResult]:
+    def _make_request(self, method: str, url: str, test_case: str, description: str, operation_type: str = "Instance Level Operation", **kwargs) -> Tuple[Optional[requests.Response], TestResult]:
         """Make HTTP request with test case tracking - prevents duplicates"""
         # Check for duplicate test cases
         existing_test = next((r for r in self.config.test_results if r.test_case == test_case), None)
@@ -149,7 +149,7 @@ class CloudDataFusionClient:
     # INSTANCE LEVEL OPERATIONS (Control Plane)
     # =====================================
     
-    def create_instance(self, instance_name: str, instance_config: Dict[str, Any]) -> Dict[str, Any]:
+    def create_instance(self, instance_name: str, instance_config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Create a new Data Fusion instance using POST"""
         url = f"{self.config.base_url}/{self.config.api_version}/projects/{self.config.project_id}/locations/{self.config.location}/instances"
         
@@ -166,9 +166,9 @@ class CloudDataFusionClient:
             "Instance Level Operation",
             json=payload
         )
-        return response.json()
+        return response.json() if response else None
     
-    def get_instance(self, instance_name: str) -> Dict[str, Any]:
+    def get_instance(self, instance_name: str) -> Optional[Dict[str, Any]]:
         """Get details of a Data Fusion instance"""
         url = f"{self.config.base_url}/{self.config.api_version}/projects/{self.config.project_id}/locations/{self.config.location}/instances/{instance_name}"
         
@@ -179,9 +179,9 @@ class CloudDataFusionClient:
             f"Retrieve details for Data Fusion instance '{instance_name}'",
             "Instance Level Operation"
         )
-        return response.json()
+        return response.json() if response else None
     
-    def update_instance(self, instance_name: str, update_config: Dict[str, Any], update_mask: str = None) -> Dict[str, Any]:
+    def update_instance(self, instance_name: str, update_config: Dict[str, Any], update_mask: str = None) -> Optional[Dict[str, Any]]:
         """Update a Data Fusion instance using PATCH"""
         url = f"{self.config.base_url}/{self.config.api_version}/projects/{self.config.project_id}/locations/{self.config.location}/instances/{instance_name}"
         
@@ -197,9 +197,9 @@ class CloudDataFusionClient:
             "Instance Level Operation",
             json=update_config, params=params
         )
-        return response.json()
+        return response.json() if response else None
     
-    def delete_instance(self, instance_name: str) -> Dict[str, Any]:
+    def delete_instance(self, instance_name: str) -> Optional[Dict[str, Any]]:
         """Delete a Data Fusion instance"""
         url = f"{self.config.base_url}/{self.config.api_version}/projects/{self.config.project_id}/locations/{self.config.location}/instances/{instance_name}"
         
@@ -210,7 +210,9 @@ class CloudDataFusionClient:
             f"Delete Data Fusion instance '{instance_name}'",
             "Instance Level Operation"
         )
-        return response.json() if response.text else {"status": "deleted"}
+        if response:
+            return response.json() if response.text else {"status": "deleted"}
+        return None
     
     def list_instances(self) -> List[Dict[str, Any]]:
         """List all Data Fusion instances in the project/location"""
@@ -223,10 +225,12 @@ class CloudDataFusionClient:
             f"List all Data Fusion instances in project '{self.config.project_id}' and location '{self.config.location}'",
             "Instance Level Operation"
         )
-        result = response.json()
-        return result.get('instances', [])
+        if response:
+            result = response.json()
+            return result.get('instances', [])
+        return []
     
-    def restart_instance(self, instance_name: str) -> Dict[str, Any]:
+    def restart_instance(self, instance_name: str) -> Optional[Dict[str, Any]]:
         """Restart a Data Fusion instance"""
         url = f"{self.config.base_url}/{self.config.api_version}/projects/{self.config.project_id}/locations/{self.config.location}/instances/{instance_name}:restart"
         
@@ -238,15 +242,17 @@ class CloudDataFusionClient:
             "Instance Level Operation",
             json={}
         )
-        return response.json()
+        return response.json() if response else None
     
-    def get_instance_api_endpoint(self, instance_name: str) -> str:
+    def get_instance_api_endpoint(self, instance_name: str) -> Optional[str]:
         """Get the CDAP API endpoint for an instance"""
         instance_details = self.get_instance(instance_name)
-        api_endpoint = instance_details.get('apiEndpoint')
-        if not api_endpoint:
-            raise ValueError(f"No API endpoint found for instance {instance_name}")
-        return api_endpoint
+        if instance_details:
+            api_endpoint = instance_details.get('apiEndpoint')
+            if not api_endpoint:
+                raise ValueError(f"No API endpoint found for instance {instance_name}")
+            return api_endpoint
+        return None
 
 
 class CDAPClient:
@@ -261,7 +267,7 @@ class CDAPClient:
             'Content-Type': 'application/json'
         })
     
-    def _make_request(self, method: str, endpoint: str, test_case: str, description: str, operation_type: str = "Pipeline Level Operation", **kwargs) -> Tuple[requests.Response, TestResult]:
+    def _make_request(self, method: str, endpoint: str, test_case: str, description: str, operation_type: str = "Pipeline Level Operation", **kwargs) -> Tuple[Optional[requests.Response], TestResult]:
         """Make HTTP request with test case tracking - prevents duplicates"""
         # Check for duplicate test cases
         existing_test = next((r for r in self.config.test_results if r.test_case == test_case), None)
@@ -332,7 +338,7 @@ class CDAPClient:
     # PIPELINE LEVEL OPERATIONS (Data Plane)
     # =====================================
     
-    def deploy_pipeline(self, namespace: str, pipeline_name: str, pipeline_config: Dict[str, Any]) -> Dict[str, Any]:
+    def deploy_pipeline(self, namespace: str, pipeline_name: str, pipeline_config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Deploy/Create a pipeline using PUT"""
         endpoint = f"/v3/namespaces/{namespace}/apps/{pipeline_name}"
         
@@ -344,9 +350,11 @@ class CDAPClient:
             "Pipeline Level Operation",
             json=pipeline_config
         )
-        return response.json() if response.text else {"status": "deployed"}
+        if response:
+            return response.json() if response.text else {"status": "deployed"}
+        return None
     
-    def get_pipeline(self, namespace: str, pipeline_name: str) -> Dict[str, Any]:
+    def get_pipeline(self, namespace: str, pipeline_name: str) -> Optional[Dict[str, Any]]:
         """Get pipeline details"""
         endpoint = f"/v3/namespaces/{namespace}/apps/{pipeline_name}"
         
@@ -357,13 +365,13 @@ class CDAPClient:
             f"Retrieve pipeline details for '{pipeline_name}' from namespace '{namespace}'",
             "Pipeline Level Operation"
         )
-        return response.json()
+        return response.json() if response else None
     
-    def update_pipeline(self, namespace: str, pipeline_name: str, pipeline_config: Dict[str, Any]) -> Dict[str, Any]:
+    def update_pipeline(self, namespace: str, pipeline_name: str, pipeline_config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Update a pipeline using PUT (redeploy)"""
         return self.deploy_pipeline(namespace, pipeline_name, pipeline_config)
     
-    def delete_pipeline(self, namespace: str, pipeline_name: str) -> Dict[str, Any]:
+    def delete_pipeline(self, namespace: str, pipeline_name: str) -> Optional[Dict[str, Any]]:
         """Delete a pipeline"""
         endpoint = f"/v3/namespaces/{namespace}/apps/{pipeline_name}"
         
@@ -374,9 +382,11 @@ class CDAPClient:
             f"Delete pipeline '{pipeline_name}' from namespace '{namespace}'",
             "Pipeline Level Operation"
         )
-        return response.json() if response.text else {"status": "deleted"}
+        if response:
+            return response.json() if response.text else {"status": "deleted"}
+        return None
     
-    def list_pipelines(self, namespace: str, artifact_name: str = None) -> List[Dict[str, Any]]:
+    def list_pipelines(self, namespace: str, artifact_name: str = None) -> Optional[List[Dict[str, Any]]]:
         """List pipelines in a namespace"""
         endpoint = f"/v3/namespaces/{namespace}/apps"
         params = {}
@@ -391,13 +401,13 @@ class CDAPClient:
             "Pipeline Level Operation",
             params=params
         )
-        return response.json()
+        return response.json() if response else None
     
-    def list_batch_pipelines(self, namespace: str) -> List[Dict[str, Any]]:
+    def list_batch_pipelines(self, namespace: str) -> Optional[List[Dict[str, Any]]]:
         """List batch pipelines specifically"""
         return self.list_pipelines(namespace, artifact_name="cdap-data-pipeline")
     
-    def list_realtime_pipelines(self, namespace: str) -> List[Dict[str, Any]]:
+    def list_realtime_pipelines(self, namespace: str) -> Optional[List[Dict[str, Any]]]:
         """List real-time pipelines specifically"""
         return self.list_pipelines(namespace, artifact_name="cdap-data-streams")
     
@@ -405,7 +415,7 @@ class CDAPClient:
     # PIPELINE EXECUTION OPERATIONS
     # =====================================
     
-    def start_batch_pipeline(self, namespace: str, pipeline_name: str, runtime_args: Dict[str, Any] = None) -> Dict[str, Any]:
+    def start_batch_pipeline(self, namespace: str, pipeline_name: str, runtime_args: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
         """Start a batch pipeline"""
         endpoint = f"/v3/namespaces/{namespace}/apps/{pipeline_name}/workflows/DataPipelineWorkflow/start"
         payload = runtime_args or {}
@@ -418,9 +428,11 @@ class CDAPClient:
             "Pipeline Level Execution",
             json=payload
         )
-        return response.json() if response.text else {"status": "started"}
+        if response:
+            return response.json() if response.text else {"status": "started"}
+        return None
     
-    def stop_batch_pipeline(self, namespace: str, pipeline_name: str) -> Dict[str, Any]:
+    def stop_batch_pipeline(self, namespace: str, pipeline_name: str) -> Optional[Dict[str, Any]]:
         """Stop a batch pipeline"""
         endpoint = f"/v3/namespaces/{namespace}/apps/{pipeline_name}/workflows/DataPipelineWorkflow/stop"
         
@@ -432,9 +444,11 @@ class CDAPClient:
             "Pipeline Level Execution",
             json={}
         )
-        return response.json() if response.text else {"status": "stopped"}
+        if response:
+            return response.json() if response.text else {"status": "stopped"}
+        return None
     
-    def start_realtime_pipeline(self, namespace: str, pipeline_name: str, runtime_args: Dict[str, Any] = None) -> Dict[str, Any]:
+    def start_realtime_pipeline(self, namespace: str, pipeline_name: str, runtime_args: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
         """Start a real-time pipeline"""
         endpoint = f"/v3/namespaces/{namespace}/apps/{pipeline_name}/spark/DataStreamsSparkStreaming/start"
         payload = runtime_args or {}
@@ -447,9 +461,11 @@ class CDAPClient:
             "Pipeline Level Execution",
             json=payload
         )
-        return response.json() if response.text else {"status": "started"}
+        if response:
+            return response.json() if response.text else {"status": "started"}
+        return None
     
-    def stop_realtime_pipeline(self, namespace: str, pipeline_name: str) -> Dict[str, Any]:
+    def stop_realtime_pipeline(self, namespace: str, pipeline_name: str) -> Optional[Dict[str, Any]]:
         """Stop a real-time pipeline"""
         endpoint = f"/v3/namespaces/{namespace}/apps/{pipeline_name}/spark/DataStreamsSparkStreaming/stop"
         
@@ -461,9 +477,11 @@ class CDAPClient:
             "Pipeline Level Execution",
             json={}
         )
-        return response.json() if response.text else {"status": "stopped"}
+        if response:
+            return response.json() if response.text else {"status": "stopped"}
+        return None
     
-    def get_pipeline_runs(self, namespace: str, pipeline_name: str, pipeline_type: str = "batch") -> List[Dict[str, Any]]:
+    def get_pipeline_runs(self, namespace: str, pipeline_name: str, pipeline_type: str = "batch") -> Optional[List[Dict[str, Any]]]:
         """Get pipeline run history"""
         if pipeline_type == "batch":
             endpoint = f"/v3/namespaces/{namespace}/apps/{pipeline_name}/workflows/DataPipelineWorkflow/runs"
@@ -477,13 +495,13 @@ class CDAPClient:
             f"Retrieve run history for {pipeline_type} pipeline '{pipeline_name}' in namespace '{namespace}'",
             "Pipeline Level Execution"
         )
-        return response.json()
+        return response.json() if response else None
 
     # =====================================
     # COMPUTE PROFILE OPERATIONS
     # =====================================
     
-    def list_compute_profiles(self, namespace: str) -> List[Dict[str, Any]]:
+    def list_compute_profiles(self, namespace: str) -> Optional[List[Dict[str, Any]]]:
         """List compute profiles in a namespace"""
         endpoint = f"/v3/namespaces/{namespace}/profiles"
         
@@ -494,9 +512,9 @@ class CDAPClient:
             f"List all compute profiles available in namespace '{namespace}'",
             "Compute Profile Operation"
         )
-        return response.json()
+        return response.json() if response else None
     
-    def create_compute_profile(self, namespace: str, profile_name: str, profile_config: Dict[str, Any]) -> Dict[str, Any]:
+    def create_compute_profile(self, namespace: str, profile_name: str, profile_config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Create a compute profile using PUT"""
         endpoint = f"/v3/namespaces/{namespace}/profiles/{profile_name}"
         
@@ -508,9 +526,11 @@ class CDAPClient:
             "Compute Profile Operation",
             json=profile_config
         )
-        return response.json() if response.text else {"status": "created"}
+        if response:
+            return response.json() if response.text else {"status": "created"}
+        return None
     
-    def get_compute_profile(self, namespace: str, profile_name: str) -> Dict[str, Any]:
+    def get_compute_profile(self, namespace: str, profile_name: str) -> Optional[Dict[str, Any]]:
         """Get compute profile details"""
         endpoint = f"/v3/namespaces/{namespace}/profiles/{profile_name}"
         
@@ -521,9 +541,9 @@ class CDAPClient:
             f"Retrieve details for compute profile '{profile_name}' in namespace '{namespace}'",
             "Compute Profile Operation"
         )
-        return response.json()
+        return response.json() if response else None
     
-    def update_compute_profile(self, namespace: str, profile_name: str, profile_config: Dict[str, Any]) -> Dict[str, Any]:
+    def update_compute_profile(self, namespace: str, profile_name: str, profile_config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Update a compute profile using PUT"""
         endpoint = f"/v3/namespaces/{namespace}/profiles/{profile_name}"
         
@@ -535,9 +555,11 @@ class CDAPClient:
             "Compute Profile Operation",
             json=profile_config
         )
-        return response.json() if response.text else {"status": "updated"}
+        if response:
+            return response.json() if response.text else {"status": "updated"}
+        return None
     
-    def delete_compute_profile(self, namespace: str, profile_name: str) -> Dict[str, Any]:
+    def delete_compute_profile(self, namespace: str, profile_name: str) -> Optional[Dict[str, Any]]:
         """Delete a compute profile"""
         endpoint = f"/v3/namespaces/{namespace}/profiles/{profile_name}"
         
@@ -548,13 +570,15 @@ class CDAPClient:
             f"Delete compute profile '{profile_name}' from namespace '{namespace}'",
             "Compute Profile Operation"
         )
-        return response.json() if response.text else {"status": "deleted"}
+        if response:
+            return response.json() if response.text else {"status": "deleted"}
+        return None
     
     # =====================================
     # SECURITY AND ACCESS CONTROL
     # =====================================
     
-    def list_secure_keys(self, namespace: str) -> List[Dict[str, Any]]:
+    def list_secure_keys(self, namespace: str) -> Optional[List[Dict[str, Any]]]:
         """List secure keys in a namespace"""
         endpoint = f"/v3/namespaces/{namespace}/securekeys"
         
@@ -565,9 +589,9 @@ class CDAPClient:
             f"List all secure keys in namespace '{namespace}'",
             "Security Operation"
         )
-        return response.json()
+        return response.json() if response else None
     
-    def create_secure_key(self, namespace: str, key_name: str, key_data: Dict[str, Any]) -> Dict[str, Any]:
+    def create_secure_key(self, namespace: str, key_name: str, key_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Create a secure key using PUT"""
         endpoint = f"/v3/namespaces/{namespace}/securekeys/{key_name}"
         
@@ -579,9 +603,11 @@ class CDAPClient:
             "Security Operation",
             json=key_data
         )
-        return response.json() if response.text else {"status": "created"}
+        if response:
+            return response.json() if response.text else {"status": "created"}
+        return None
     
-    def get_secure_key_metadata(self, namespace: str, key_name: str) -> Dict[str, Any]:
+    def get_secure_key_metadata(self, namespace: str, key_name: str) -> Optional[Dict[str, Any]]:
         """Get secure key metadata"""
         endpoint = f"/v3/namespaces/{namespace}/securekeys/{key_name}/metadata"
         
@@ -592,9 +618,9 @@ class CDAPClient:
             f"Retrieve metadata for secure key '{key_name}' in namespace '{namespace}'",
             "Security Operation"
         )
-        return response.json()
+        return response.json() if response else None
     
-    def delete_secure_key(self, namespace: str, key_name: str) -> Dict[str, Any]:
+    def delete_secure_key(self, namespace: str, key_name: str) -> Optional[Dict[str, Any]]:
         """Delete a secure key"""
         endpoint = f"/v3/namespaces/{namespace}/securekeys/{key_name}"
         
@@ -605,7 +631,9 @@ class CDAPClient:
             f"Delete secure key '{key_name}' from namespace '{namespace}'",
             "Security Operation"
         )
-        return response.json() if response.text else {"status": "deleted"}
+        if response:
+            return response.json() if response.text else {"status": "deleted"}
+        return None
 
 
 class DataFusionManager:
@@ -624,16 +652,19 @@ class DataFusionManager:
         self.instance_client = CloudDataFusionClient(self.config)
         self.cdap_clients = {}  # Cache CDAP clients by instance
     
-    def get_cdap_client(self, instance_name: str) -> CDAPClient:
+    def get_cdap_client(self, instance_name: str) -> Optional[CDAPClient]:
         """Get or create CDAP client for an instance"""
         if instance_name not in self.cdap_clients:
             api_endpoint = self.instance_client.get_instance_api_endpoint(instance_name)
-            self.cdap_clients[instance_name] = CDAPClient(api_endpoint, self.config.auth_token, self.config)
+            if api_endpoint:
+                self.cdap_clients[instance_name] = CDAPClient(api_endpoint, self.config.auth_token, self.config)
+            else:
+                return None
         return self.cdap_clients[instance_name]
     
     # Instance operations
     def create_instance(self, instance_name: str, instance_type: str = "BASIC", 
-                       description: str = "Created via API") -> Dict[str, Any]:
+                       description: str = "Created via API") -> Optional[Dict[str, Any]]:
         """Create a new Data Fusion instance with basic configuration"""
         instance_config = {
             "type": instance_type,
@@ -643,7 +674,7 @@ class DataFusionManager:
         }
         return self.instance_client.create_instance(instance_name, instance_config)
     
-    def delete_instance(self, instance_name: str) -> Dict[str, Any]:
+    def delete_instance(self, instance_name: str) -> Optional[Dict[str, Any]]:
         """Delete a Data Fusion instance"""
         return self.instance_client.delete_instance(instance_name)
     
@@ -654,9 +685,11 @@ class DataFusionManager:
     # Pipeline operations
     def deploy_batch_pipeline(self, instance_name: str, pipeline_name: str, 
                              source_config: Dict[str, Any], sink_config: Dict[str, Any],
-                             namespace: str = "default") -> Dict[str, Any]:
+                             namespace: str = "default") -> Optional[Dict[str, Any]]:
         """Deploy a simple batch pipeline"""
         cdap_client = self.get_cdap_client(instance_name)
+        if not cdap_client:
+            return None
         
         pipeline_config = {
             "name": pipeline_name,
@@ -688,24 +721,30 @@ class DataFusionManager:
         
         return cdap_client.deploy_pipeline(namespace, pipeline_name, pipeline_config)
     
-    def delete_pipeline(self, instance_name: str, pipeline_name: str, namespace: str = "default") -> Dict[str, Any]:
+    def delete_pipeline(self, instance_name: str, pipeline_name: str, namespace: str = "default") -> Optional[Dict[str, Any]]:
         """Delete a pipeline"""
         cdap_client = self.get_cdap_client(instance_name)
+        if not cdap_client:
+            return None
         return cdap_client.delete_pipeline(namespace, pipeline_name)
     
     def start_pipeline(self, instance_name: str, pipeline_name: str, 
-                      pipeline_type: str = "batch", namespace: str = "default") -> Dict[str, Any]:
+                      pipeline_type: str = "batch", namespace: str = "default") -> Optional[Dict[str, Any]]:
         """Start a pipeline"""
         cdap_client = self.get_cdap_client(instance_name)
+        if not cdap_client:
+            return None
         if pipeline_type == "batch":
             return cdap_client.start_batch_pipeline(namespace, pipeline_name)
         else:
             return cdap_client.start_realtime_pipeline(namespace, pipeline_name)
     
     def stop_pipeline(self, instance_name: str, pipeline_name: str,
-                     pipeline_type: str = "batch", namespace: str = "default") -> Dict[str, Any]:
+                     pipeline_type: str = "batch", namespace: str = "default") -> Optional[Dict[str, Any]]:
         """Stop a pipeline"""
         cdap_client = self.get_cdap_client(instance_name)
+        if not cdap_client:
+            return None
         if pipeline_type == "batch":
             return cdap_client.stop_batch_pipeline(namespace, pipeline_name)
         else:
@@ -715,9 +754,11 @@ class DataFusionManager:
     def create_dataproc_compute_profile(self, instance_name: str, namespace: str, 
                                       profile_name: str, project_id: str, region: str,
                                       machine_type: str = "n1-standard-4",
-                                      num_workers: int = 2) -> Dict[str, Any]:
+                                      num_workers: int = 2) -> Optional[Dict[str, Any]]:
         """Create a Dataproc compute profile with common configurations"""
         cdap_client = self.get_cdap_client(instance_name)
+        if not cdap_client:
+            return None
         
         profile_config = {
             "label": f"Dataproc Profile - {profile_name}",
@@ -743,9 +784,11 @@ class DataFusionManager:
     
     def create_secure_key_for_database(self, instance_name: str, namespace: str, 
                                      key_name: str, connection_string: str, 
-                                     username: str, password: str) -> Dict[str, Any]:
+                                     username: str, password: str) -> Optional[Dict[str, Any]]:
         """Create a secure key for database connections"""
         cdap_client = self.get_cdap_client(instance_name)
+        if not cdap_client:
+            return None
         
         key_data = {
             "description": f"Database connection credentials for {key_name}",
@@ -846,6 +889,9 @@ class TestRunner:
         """Test pipeline operations"""
         try:
             cdap_client = self.manager.get_cdap_client(instance_name)
+            if not cdap_client:
+                print("✗ Could not get CDAP client for pipeline operations")
+                return
             
             # Test listing pipelines
             cdap_client.list_pipelines("default")
@@ -862,6 +908,9 @@ class TestRunner:
         """Test compute profile operations"""
         try:
             cdap_client = self.manager.get_cdap_client(instance_name)
+            if not cdap_client:
+                print("✗ Could not get CDAP client for compute profile operations")
+                return
             
             # Test listing compute profiles
             cdap_client.list_compute_profiles("default")
@@ -903,6 +952,9 @@ class TestRunner:
         """Test security and access control operations"""
         try:
             cdap_client = self.manager.get_cdap_client(instance_name)
+            if not cdap_client:
+                print("✗ Could not get CDAP client for security operations")
+                return
             
             # Test listing secure keys
             cdap_client.list_secure_keys("default")
