@@ -4,13 +4,17 @@
 # Google Cloud Data Fusion CLI Test Script
 # Description: Tests all available gcloud beta data-fusion CLI commands
 # Author: Cloud Data Fusion Test Automation
-# Version: 1.3
+# Version: 1.4
 # 
 # IMPORTANT: This script is designed for users with custom role permissions 
 # that include only read operations. All update/modify operations are 
 # expected to fail due to insufficient permissions.
 #
 # Compatible with: Linux, macOS, BSD
+# 
+# Optimizations:
+# - Uses --async flag for all long-running operations to improve test speed
+# - Permission checks happen immediately, even with --async
 ###############################################################################
 
 # Color codes for output
@@ -220,10 +224,10 @@ execute_test "TC007" "List operations" "gcloud beta data-fusion operations list 
 # Test Case 8: Update instance (add label) - EXPECTED TO FAIL WITH CUSTOM ROLE PERMISSIONS
 TEST_LABEL_KEY="test-run"
 TEST_LABEL_VALUE="automated-${TIMESTAMP}"
-execute_test "TC008" "Update instance labels" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --update-labels=${TEST_LABEL_KEY}=${TEST_LABEL_VALUE}" "true"
+execute_test "TC008" "Update instance labels" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --update-labels=${TEST_LABEL_KEY}=${TEST_LABEL_VALUE} --async" "true"
 
 # Test Case 9: Update instance options - EXPECTED TO FAIL WITH CUSTOM ROLE PERMISSIONS
-execute_test "TC009" "Update instance options" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --options=system.profile.properties.dataproc.preferExternalIP=true" "true"
+execute_test "TC009" "Update instance options" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --options=system.profile.properties.dataproc.preferExternalIP=true --async" "true"
 
 # Test Case 10: Restart instance - EXPECTED TO FAIL WITH CUSTOM ROLE PERMISSIONS
 execute_test "TC010" "Restart instance" "gcloud beta data-fusion instances restart $INSTANCE_NAME --location=$LOCATION --async" "true"
@@ -232,13 +236,13 @@ execute_test "TC010" "Restart instance" "gcloud beta data-fusion instances resta
 log "Skipping wait for restart operation (custom role permissions don't allow restart)"
 
 # Test Case 12: Enable stack driver logging - EXPECTED TO FAIL WITH CUSTOM ROLE PERMISSIONS
-execute_test "TC012" "Enable Stackdriver logging" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --enable_stackdriver_logging" "true"
+execute_test "TC012" "Enable Stackdriver logging" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --enable_stackdriver_logging --async" "true"
 
 # Test Case 13: Enable stack driver monitoring - EXPECTED TO FAIL WITH CUSTOM ROLE PERMISSIONS
-execute_test "TC013" "Enable Stackdriver monitoring" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --enable_stackdriver_monitoring" "true"
+execute_test "TC013" "Enable Stackdriver monitoring" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --enable_stackdriver_monitoring --async" "true"
 
 # Test Case 14: Update instance description - EXPECTED TO FAIL WITH CUSTOM ROLE PERMISSIONS
-execute_test "TC014" "Update instance description" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --description='Updated by automated test at ${TIMESTAMP}'" "true"
+execute_test "TC014" "Update instance description" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --description='Updated by automated test at ${TIMESTAMP}' --async" "true"
 
 # Test Case 15: Add IAM policy binding - EXPECTED TO FAIL WITH CUSTOM ROLE PERMISSIONS
 TEST_USER="user:test-automation@example.com"
@@ -272,10 +276,10 @@ execute_test "TC023" "Get private instance status" "gcloud beta data-fusion inst
 execute_test "TC024" "Get network config" "gcloud beta data-fusion instances describe $INSTANCE_NAME --location=$LOCATION --format='value(networkConfig)'"
 
 # Test Case 25: Update instance with zone - EXPECTED TO FAIL WITH CUSTOM ROLE PERMISSIONS
-execute_test "TC025" "Update instance zone" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --zone=${LOCATION}-a" "true"
+execute_test "TC025" "Update instance zone" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --zone=${LOCATION}-a --async" "true"
 
 # Test Case 26: Clear labels - EXPECTED TO FAIL WITH CUSTOM ROLE PERMISSIONS
-execute_test "TC026" "Clear instance labels" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --clear-labels" "true"
+execute_test "TC026" "Clear instance labels" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --clear-labels --async" "true"
 
 # Test Case 27: List operations with filter
 execute_test "TC027" "List operations with filter" "gcloud beta data-fusion operations list --location=$LOCATION --filter='name:$INSTANCE_NAME' --format=json"
