@@ -3,66 +3,97 @@
 ## Overview
 This document provides detailed information about all test cases implemented in the Cloud Data Fusion CLI test script. Each test case validates specific functionality of the `gcloud beta data-fusion` commands.
 
+**IMPORTANT**: This test suite is designed for users with **custom role permissions** that include only read operations. All write/update operations are expected to fail due to insufficient permissions.
+
 ## Test Environment Requirements
 - Google Cloud SDK installed and configured
 - Valid GCP Project with Data Fusion API enabled
 - Existing Data Fusion instance
-- Appropriate IAM permissions
+- User with a custom IAM role containing only read permissions for Data Fusion
+
+## Permission Model
+The test script assumes the executing user has a **custom role with read-only permissions**, which allows:
+- ✅ Read operations (list, describe, get)
+- ❌ Write operations (create, update, delete, restart)
+- ❌ IAM modifications (add/remove bindings, set policies)
+
+### Example Custom Role Definition
+```yaml
+title: "Data Fusion Read Only"
+description: "Custom role for read-only access to Data Fusion instances"
+stage: "GA"
+includedPermissions:
+- datafusion.instances.get
+- datafusion.instances.list
+- datafusion.operations.get
+- datafusion.operations.list
+- datafusion.instances.getIamPolicy
+```
 
 ## Test Cases Summary
 
-| Test ID | Test Case Name | Command Category | Description | Expected Result | Notes |
-|---------|----------------|------------------|-------------|-----------------|-------|
-| TC001 | Check gcloud installation | Environment | Verifies gcloud CLI is installed and accessible | PASS | Prerequisite check |
-| TC002 | Set project | Environment | Sets the GCP project context | PASS | Required for subsequent commands |
-| TC003 | Check Data Fusion API | API Status | Verifies Data Fusion API is enabled | PASS | Must be enabled for any operations |
-| TC004 | List instances | Instance Management | Lists all Data Fusion instances in location | PASS | Returns JSON array of instances |
-| TC005 | Describe instance | Instance Management | Gets detailed information about specific instance | PASS | Returns complete instance metadata |
-| TC006 | Get IAM policy | Security | Retrieves IAM policy for the instance | PASS | Shows current access permissions |
-| TC007 | List operations | Operations | Lists all operations in the location | PASS | Shows ongoing and completed operations |
-| TC008 | Update instance labels | Instance Management | Adds test label to instance | PASS | Tests metadata update capability |
-| TC009 | Update instance options | Instance Management | Updates instance configuration options | PASS | Tests runtime configuration changes |
-| TC010 | Restart instance | Instance Management | Initiates instance restart | PASS | Tests instance lifecycle management |
-| TC011 | Wait for restart | Operations | Waits for restart operation to complete | N/A | Ensures instance is ready |
-| TC012 | Enable Stackdriver logging | Monitoring | Enables Cloud Logging for instance | PASS | Tests logging configuration |
-| TC013 | Enable Stackdriver monitoring | Monitoring | Enables Cloud Monitoring for instance | PASS | Tests monitoring configuration |
-| TC014 | Update instance description | Instance Management | Updates instance description field | PASS | Tests metadata modification |
-| TC015 | Add IAM policy binding | Security | Adds viewer role to test user | EXPECTED_FAIL | May fail if user doesn't exist |
-| TC016 | Remove IAM policy binding | Security | Removes viewer role from test user | EXPECTED_FAIL | May fail if binding doesn't exist |
-| TC017 | Get API endpoint | Instance Info | Retrieves CDAP API endpoint URL | PASS | Required for REST API calls |
-| TC018 | Get service endpoint | Instance Info | Retrieves service endpoint URL | PASS | UI access endpoint |
-| TC019 | Get instance state | Instance Info | Checks current instance state | PASS | Should return RUNNING |
-| TC020 | Get instance version | Instance Info | Gets current Data Fusion version | PASS | Version information |
-| TC021 | List available versions | Instance Info | Lists available upgrade versions | PASS | For upgrade planning |
-| TC022 | Get instance type | Instance Info | Gets instance type (BASIC/ENTERPRISE) | PASS | Instance tier information |
-| TC023 | Get private instance status | Instance Info | Checks if instance is private | PASS | Network configuration |
-| TC024 | Get network config | Instance Info | Retrieves network configuration | PASS | VPC and network details |
-| TC025 | Update instance zone | Instance Management | Attempts to update instance zone | EXPECTED_FAIL | Zone is immutable |
-| TC026 | Clear instance labels | Instance Management | Removes all labels from instance | PASS | Cleanup operation |
-| TC027 | List operations with filter | Operations | Lists operations filtered by instance | PASS | Filtered operation listing |
-| TC028 | Describe latest operation | Operations | Gets details of most recent operation | EXPECTED_FAIL | May fail if no operations |
-| TC029 | Set IAM policy from file | Security | Sets complete IAM policy from JSON | EXPECTED_FAIL | Requires valid policy file |
-| TC030 | Get instance creation time | Instance Info | Retrieves instance creation timestamp | PASS | Instance age information |
+| Test ID | Test Case Name | Command Category | Description | Expected Result | Permission Required |
+|---------|----------------|------------------|-------------|-----------------|---------------------|
+| TC001 | Check gcloud installation | Environment | Verifies gcloud CLI is installed and accessible | PASS | None |
+| TC002 | Set project | Environment | Sets the GCP project context | PASS | None |
+| TC003 | Check Data Fusion API | API Status | Verifies Data Fusion API is enabled | PASS | Viewer |
+| TC004 | List instances | Instance Management | Lists all Data Fusion instances in location | PASS | Viewer |
+| TC005 | Describe instance | Instance Management | Gets detailed information about specific instance | PASS | Viewer |
+| TC006 | Get IAM policy | Security | Retrieves IAM policy for the instance | PASS | Viewer |
+| TC007 | List operations | Operations | Lists all operations in the location | PASS | Viewer |
+| TC008 | Update instance labels | Instance Management | Adds test label to instance | **EXPECTED_FAIL** | Editor/Admin |
+| TC009 | Update instance options | Instance Management | Updates instance configuration options | **EXPECTED_FAIL** | Editor/Admin |
+| TC010 | Restart instance | Instance Management | Initiates instance restart | **EXPECTED_FAIL** | Editor/Admin |
+| TC011 | Wait for restart | Operations | Skipped - restart won't happen | N/A | N/A |
+| TC012 | Enable Stackdriver logging | Monitoring | Enables Cloud Logging for instance | **EXPECTED_FAIL** | Editor/Admin |
+| TC013 | Enable Stackdriver monitoring | Monitoring | Enables Cloud Monitoring for instance | **EXPECTED_FAIL** | Editor/Admin |
+| TC014 | Update instance description | Instance Management | Updates instance description field | **EXPECTED_FAIL** | Editor/Admin |
+| TC015 | Add IAM policy binding | Security | Adds viewer role to test user | **EXPECTED_FAIL** | Admin |
+| TC016 | Remove IAM policy binding | Security | Removes viewer role from test user | **EXPECTED_FAIL** | Admin |
+| TC017 | Get API endpoint | Instance Info | Retrieves CDAP API endpoint URL | PASS | Viewer |
+| TC018 | Get service endpoint | Instance Info | Retrieves service endpoint URL | PASS | Viewer |
+| TC019 | Get instance state | Instance Info | Checks current instance state | PASS | Viewer |
+| TC020 | Get instance version | Instance Info | Gets current Data Fusion version | PASS | Viewer |
+| TC021 | List available versions | Instance Info | Lists available upgrade versions | PASS | Viewer |
+| TC022 | Get instance type | Instance Info | Gets instance type (BASIC/ENTERPRISE) | PASS | Viewer |
+| TC023 | Get private instance status | Instance Info | Checks if instance is private | PASS | Viewer |
+| TC024 | Get network config | Instance Info | Retrieves network configuration | PASS | Viewer |
+| TC025 | Update instance zone | Instance Management | Attempts to update instance zone | **EXPECTED_FAIL** | Editor/Admin |
+| TC026 | Clear instance labels | Instance Management | Removes all labels from instance | **EXPECTED_FAIL** | Editor/Admin |
+| TC027 | List operations with filter | Operations | Lists operations filtered by instance | PASS | Viewer |
+| TC028 | Describe latest operation | Operations | Gets details of most recent operation | EXPECTED_FAIL | Viewer |
+| TC029 | Set IAM policy from file | Security | Sets complete IAM policy from JSON | **EXPECTED_FAIL** | Admin |
+| TC030 | Get instance creation time | Instance Info | Retrieves instance creation timestamp | PASS | Viewer |
 
-## Command Categories
+## Command Categories by Permission Level
 
-### 1. Instance Management Commands
-- `gcloud beta data-fusion instances list`
-- `gcloud beta data-fusion instances describe`
-- `gcloud beta data-fusion instances create`
-- `gcloud beta data-fusion instances update`
-- `gcloud beta data-fusion instances delete`
-- `gcloud beta data-fusion instances restart`
+### ✅ Custom Role Read Permissions (Expected to PASS)
+These commands only read information and don't modify any resources:
 
-### 2. IAM and Security Commands
-- `gcloud beta data-fusion get-iam-policy`
-- `gcloud beta data-fusion set-iam-policy`
-- `gcloud beta data-fusion add-iam-policy-binding`
-- `gcloud beta data-fusion remove-iam-policy-binding`
+1. **Instance Information**
+   - `gcloud beta data-fusion instances list`
+   - `gcloud beta data-fusion instances describe`
 
-### 3. Operations Commands
-- `gcloud beta data-fusion operations list`
-- `gcloud beta data-fusion operations describe`
+2. **IAM Policy Reading**
+   - `gcloud beta data-fusion get-iam-policy`
+
+3. **Operations Listing**
+   - `gcloud beta data-fusion operations list`
+   - `gcloud beta data-fusion operations describe`
+
+### ❌ Write Permissions Required (Expected to FAIL)
+These commands modify resources and require write permissions not included in the custom read-only role:
+
+1. **Instance Management**
+   - `gcloud beta data-fusion instances create`
+   - `gcloud beta data-fusion instances update`
+   - `gcloud beta data-fusion instances delete`
+   - `gcloud beta data-fusion instances restart`
+
+2. **IAM Policy Modification**
+   - `gcloud beta data-fusion set-iam-policy`
+   - `gcloud beta data-fusion add-iam-policy-binding`
+   - `gcloud beta data-fusion remove-iam-policy-binding`
 
 ## Common Parameters
 
@@ -95,51 +126,84 @@ This document provides detailed information about all test cases implemented in 
 - `--maintenance-window-recurrence`: Set maintenance recurrence
 - `--clear-maintenance-window`: Remove maintenance window
 
-## Expected Test Results
+## Expected Test Results for Custom Role Permissions
 
 ### Success Criteria
-- All core instance management commands execute successfully
-- Instance information retrieval works correctly
-- Update operations complete without errors
-- IAM policy retrieval functions properly
+With custom read-only role permissions, the test is considered successful when:
+- All read-only commands (list, describe, get) execute successfully
+- All write/update commands fail with permission denied errors
+- No unexpected failures occur for read operations
+- Success rate = (PASS + EXPECTED_FAIL) / Total Tests
 
-### Known Limitations
-- Some IAM operations may fail due to permission constraints
-- Zone updates are not supported (immutable field)
-- Some operations require specific instance states
+### Expected Results Summary
+- **~15 tests should PASS** (all read operations)
+- **~15 tests should EXPECTED_FAIL** (all write operations)
+- **0 tests should FAIL** (unexpected failures indicate issues)
 
-## Troubleshooting Guide
+### Permission Error Messages
+When running with custom read-only role permissions, expect error messages like:
+- `ERROR: (gcloud.beta.data-fusion.instances.update) PERMISSION_DENIED`
+- `User does not have permission to access instance`
+- `Request had insufficient authentication scopes`
+- `Missing required permissions: datafusion.instances.update`
+
+## Troubleshooting Guide for Custom Role Permissions
 
 ### Common Issues and Solutions
 
-1. **Authentication Errors**
-   - Ensure `gcloud auth login` has been executed
-   - Verify project permissions
+1. **Unexpected PASS for Update Commands**
+   - Issue: Update command succeeded when it should have failed
+   - Cause: Custom role includes write permissions
+   - Solution: Review custom role definition and remove write permissions
 
-2. **API Not Enabled**
-   - Enable Data Fusion API: `gcloud services enable datafusion.googleapis.com`
+2. **Read Commands Failing**
+   - Issue: List/Describe commands fail with permission errors
+   - Cause: Custom role missing required read permissions
+   - Solution: Add missing permissions like `datafusion.instances.get` to custom role
 
-3. **Instance Not Found**
-   - Verify instance name and location
-   - Check if instance is in RUNNING state
+3. **Authentication Errors on All Commands**
+   - Issue: All commands fail with authentication errors
+   - Cause: Not properly authenticated
+   - Solution: Run `gcloud auth login` and ensure correct account
 
-4. **Permission Denied**
-   - Ensure user has required IAM roles:
-     - `roles/datafusion.admin` or
-     - `roles/datafusion.editor` or
-     - `roles/datafusion.viewer`
+4. **Custom Role Not Found**
+   - Issue: IAM policy shows role doesn't exist
+   - Cause: Custom role not created or wrong project
+   - Solution: Create custom role with: `gcloud iam roles create`
 
-5. **Operation Timeouts**
-   - Some operations like restart may take several minutes
-   - Use `--async` flag for long-running operations
+## IAM Roles and Custom Roles Reference
 
-## Best Practices
+### Predefined Roles
+| Role | Permissions | Test Impact |
+|------|-------------|-------------|
+| `roles/datafusion.viewer` | Read-only access to instances | Only read operations pass |
+| `roles/datafusion.editor` | Read/write access, no IAM | Most operations pass except IAM |
+| `roles/datafusion.admin` | Full access including IAM | All operations pass |
 
-1. **Always specify location**: Data Fusion instances are regional resources
-2. **Use JSON format**: For programmatic parsing of command outputs
-3. **Handle async operations**: Check operation status before proceeding
-4. **Implement retries**: For transient failures
-5. **Log all operations**: For audit and troubleshooting
+### Custom Role Example for This Test
+```bash
+# Create a custom read-only role
+gcloud iam roles create dataFusionReadOnly \
+    --project=PROJECT_ID \
+    --title="Data Fusion Read Only" \
+    --description="Custom role for read-only Data Fusion access" \
+    --permissions=datafusion.instances.get,datafusion.instances.list,datafusion.operations.get,datafusion.operations.list,datafusion.instances.getIamPolicy
+
+# Grant the custom role to a user
+gcloud projects add-iam-policy-binding PROJECT_ID \
+    --member=user:EMAIL@example.com \
+    --role=projects/PROJECT_ID/roles/dataFusionReadOnly
+```
+
+## Best Practices for Custom Role Testing
+
+1. **Define Minimal Permissions**: Include only necessary read permissions in custom role
+2. **Document Custom Role**: Keep track of what permissions are included
+3. **Expected Failure Handling**: The script marks write operations as expected failures
+4. **Focus on Read Operations**: Custom read-only roles are meant for monitoring and inspection
+5. **Success Rate Calculation**: Includes both PASS and EXPECTED_FAIL in success rate
+6. **Use for Validation**: Perfect for validating read access and instance health
+7. **Regular Review**: Periodically review custom role permissions for security
 
 ## Integration with CDAP REST API
 
@@ -160,14 +224,31 @@ curl -H "Authorization: Bearer ${AUTH_TOKEN}" \
   "${CDAP_ENDPOINT}/v3/namespaces"
 ```
 
-## Reporting
+## Reporting with Custom Role Permissions
 
-The test script generates multiple output formats:
+The test script generates multiple output formats optimized for custom read-only role scenarios:
 
-1. **CSV File**: Machine-readable test results
-2. **HTML Report**: Human-readable test report with formatting
-3. **Log File**: Detailed execution logs
-4. **Summary File**: High-level test execution summary
+1. **CSV File**: Machine-readable test results with EXPECTED_FAIL status for write operations
+2. **HTML Report**: Human-readable test report with color coding:
+   - Green: Successful read operations (PASS)
+   - Yellow: Expected failures for write operations (EXPECTED_FAIL)
+   - Red: Unexpected failures (FAIL)
+3. **Log File**: Detailed execution logs showing permission denied errors
+4. **Summary File**: High-level summary showing success rate including expected failures
+
+### Sample Test Summary Output
+```
+Test Results:
+-------------
+Total Tests Executed: 30
+Passed (Read Operations): 15
+Failed (Unexpected): 0
+Expected Failures (Write Operations): 15
+Success Rate: 100.0%
+
+Note: Success rate includes both PASS and EXPECTED_FAIL results.
+Write operations are expected to fail with custom role read-only permissions.
+```
 
 ## Version Compatibility
 
