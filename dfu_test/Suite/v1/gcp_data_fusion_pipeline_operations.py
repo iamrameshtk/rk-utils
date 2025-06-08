@@ -15,17 +15,17 @@ Features:
 - Summary statistics
 
 Usage:
-    python gcp_data_fusion_pipeline_operations.py --project PROJECT_ID --location LOCATION --instance INSTANCE_NAME
+    python gcp_data_fusion_pipeline_operations.py --project PROJECT_ID --location LOCATION --instance INSTANCE_NAME --pipeline-config PIPELINE_JSON_FILE
     
 Examples:
-    # Test all pipeline operations
-    python gcp_data_fusion_pipeline_operations.py --project my-project --location us-central1 --instance my-instance
+    # Test all pipeline operations with a pipeline config file
+    python gcp_data_fusion_pipeline_operations.py --project my-project --location us-central1 --instance my-instance --pipeline-config my-pipeline.json
     
     # Test in specific namespace
-    python gcp_data_fusion_pipeline_operations.py --project my-project --location us-central1 --instance my-instance --namespace production
+    python gcp_data_fusion_pipeline_operations.py --project my-project --location us-central1 --instance my-instance --namespace production --pipeline-config pipeline.json
     
     # Skip cleanup (keep test resources)
-    python gcp_data_fusion_pipeline_operations.py --project my-project --location us-central1 --instance my-instance --skip-cleanup
+    python gcp_data_fusion_pipeline_operations.py --project my-project --location us-central1 --instance my-instance --skip-cleanup --pipeline-config pipeline.json
 
 Requirements:
     export GOOGLE_AUTH_TOKEN=$(gcloud auth print-access-token)
@@ -114,6 +114,7 @@ class Config:
     instance_name: str
     namespace: str
     auth_token: str
+    pipeline_config_file: Optional[str] = None
     base_url: str = "https://datafusion.googleapis.com"
     api_version: str = "v1beta1"
     test_results: List[TestResult] = field(default_factory=list)
@@ -604,8 +605,9 @@ class CDAPClient:
 class PipelineTestRunner:
     """Test runner for pipeline-level operations"""
     
-    def __init__(self, client: CDAPClient, skip_cleanup: bool = False):
+    def __init__(self, client: CDAPClient, pipeline_config: Dict[str, Any], skip_cleanup: bool = False):
         self.client = client
+        self.pipeline_config = pipeline_config
         self.skip_cleanup = skip_cleanup
         self.test_pipeline_name = f"test-pipeline-{int(time.time())}"
         self.test_profile_name = f"test-profile-{int(time.time())}"
@@ -678,78 +680,10 @@ class PipelineTestRunner:
         """Test complete pipeline workflow: CREATE -> DEPLOY -> UPDATE -> LIST -> START -> STOP -> DELETE"""
         print("=== Testing Complete Pipeline Workflow ===")
         
-        # First, let's try a simpler pipeline config that's more likely to work
-        simple_pipeline_config = {
-            "name": self.test_pipeline_name,
-            "description": "Test pipeline for complete workflow validation",
-            "artifact": {
-                "name": "cdap-data-pipeline",
-                "version": "[6.0.0, 7.0.0)",  # Version range for compatibility
-                "scope": "SYSTEM"
-            },
-            "config": {
-                "resources": {
-                    "memoryMB": 1024,
-                    "virtualCores": 1
-                },
-                "driverResources": {
-                    "memoryMB": 1024,
-                    "virtualCores": 1
-                },
-                "connections": [],
-                "comments": [],
-                "postActions": [],
-                "properties": {},
-                "processTimingEnabled": True,
-                "stageLoggingEnabled": False,
-                "stages": [
-                    {
-                        "name": "MockSource",
-                        "plugin": {
-                            "name": "Mock",
-                            "type": "batchsource",
-                            "label": "Mock Source",
-                            "artifact": {
-                                "name": "core-plugins",
-                                "version": "[2.0.0, 3.0.0)",
-                                "scope": "SYSTEM"
-                            },
-                            "properties": {
-                                "schema": "{\"type\":\"record\",\"name\":\"etlSchemaBody\",\"fields\":[{\"name\":\"id\",\"type\":\"int\"},{\"name\":\"name\",\"type\":\"string\"}]}"
-                            }
-                        },
-                        "outputSchema": "{\"type\":\"record\",\"name\":\"etlSchemaBody\",\"fields\":[{\"name\":\"id\",\"type\":\"int\"},{\"name\":\"name\",\"type\":\"string\"}]}",
-                        "id": "MockSource"
-                    },
-                    {
-                        "name": "MockSink",
-                        "plugin": {
-                            "name": "Mock",
-                            "type": "batchsink",
-                            "label": "Mock Sink",
-                            "artifact": {
-                                "name": "core-plugins",
-                                "version": "[2.0.0, 3.0.0)",
-                                "scope": "SYSTEM"
-                            },
-                            "properties": {}
-                        },
-                        "outputSchema": "{\"type\":\"record\",\"name\":\"etlSchemaBody\",\"fields\":[{\"name\":\"id\",\"type\":\"int\"},{\"name\":\"name\",\"type\":\"string\"}]}",
-                        "inputSchema": [
-                            {
-                                "name": "MockSource",
-                                "schema": "{\"type\":\"record\",\"name\":\"etlSchemaBody\",\"fields\":[{\"name\":\"id\",\"type\":\"int\"},{\"name\":\"name\",\"type\":\"string\"}]}"
-                            }
-                        ],
-                        "id": "MockSink"
-                    }
-                ],
-                "schedule": "0 * * * *",
-                "engine": "spark",
-                "numOfRecordsPreview": 100,
-                "maxConcurrentRuns": 1
-            }
-        }
+        # Update the pipeline config name if it has one
+        pipeline_config_for_test = self.pipeline_config.copy()
+        if "name" in pipeline_config_for_test:
+            pipeline_config_for_test["name"] = self.test_pipeline_name
         
         pipeline_created = False
         
@@ -758,7 +692,7 @@ class PipelineTestRunner:
             # Step 1: DEPLOY/CREATE pipeline
             result = self.client.deploy_pipeline(
                 self.test_pipeline_name, 
-                simple_pipeline_config,
+                pipeline_config_for_test,
                 expected_result="Should succeed with 200 OK for valid pipeline config"
             )
             print(f"✓ Step 1: DEPLOY_PIPELINE_{self.test_pipeline_name} passed")
@@ -767,44 +701,7 @@ class PipelineTestRunner:
         except Exception as e:
             print(f"✗ Step 1: DEPLOY_PIPELINE_{self.test_pipeline_name} failed: {e}")
             print(f"   Error details: {str(e)[:200]}")
-            
-            # Try alternative pipeline configuration with minimal settings
-            print("\n   Trying alternative minimal pipeline configuration...")
-            minimal_pipeline_config = {
-                "artifact": {
-                    "name": "cdap-data-pipeline",
-                    "version": "[6.0.0, 7.0.0)",
-                    "scope": "SYSTEM"
-                },
-                "config": {
-                    "stages": [],
-                    "connections": [],
-                    "resources": {
-                        "memoryMB": 1024,
-                        "virtualCores": 1
-                    },
-                    "driverResources": {
-                        "memoryMB": 1024,
-                        "virtualCores": 1
-                    },
-                    "engine": "spark"
-                }
-            }
-            
-            try:
-                result = self.client.deploy_pipeline(
-                    self.test_pipeline_name + "-minimal", 
-                    minimal_pipeline_config,
-                    expected_result="Should succeed with 200 OK for minimal pipeline config"
-                )
-                print(f"✓ Step 1b: DEPLOY_PIPELINE_{self.test_pipeline_name}-minimal passed")
-                self.test_pipeline_name = self.test_pipeline_name + "-minimal"
-                pipeline_created = True
-                simple_pipeline_config = minimal_pipeline_config
-            except Exception as e2:
-                print(f"✗ Step 1b: Minimal pipeline deployment also failed: {str(e2)[:100]}")
-                # Continue with remaining tests even if pipeline creation failed
-                pass
+            # Continue with remaining tests even if pipeline creation failed
         
         # Only continue with pipeline operations if pipeline was created
         if pipeline_created:
@@ -822,13 +719,15 @@ class PipelineTestRunner:
             
             # Step 3: UPDATE pipeline
             try:
-                simple_pipeline_config["description"] = "Updated test pipeline for workflow validation"
-                if "config" in simple_pipeline_config:
-                    simple_pipeline_config["config"]["description"] = "Updated via API test"
+                # Update description if it exists
+                if "description" in pipeline_config_for_test:
+                    pipeline_config_for_test["description"] = "Updated test pipeline for workflow validation"
+                elif "config" in pipeline_config_for_test:
+                    pipeline_config_for_test["config"]["description"] = "Updated via API test"
                 
                 self.client.update_pipeline(
                     self.test_pipeline_name, 
-                    simple_pipeline_config,
+                    pipeline_config_for_test,
                     expected_result="Should succeed with 200 OK for valid update"
                 )
                 print(f"✓ Step 3: UPDATE_PIPELINE_{self.test_pipeline_name} passed")
@@ -848,7 +747,7 @@ class PipelineTestRunner:
                 print(f"✗ Step 4: LIST_PIPELINES failed: {str(e)[:100]}")
             
             # Step 5: START pipeline (only if it has stages)
-            if simple_pipeline_config.get("config", {}).get("stages"):
+            if pipeline_config_for_test.get("config", {}).get("stages"):
                 try:
                     self.client.start_batch_pipeline(
                         self.test_pipeline_name,
@@ -1322,6 +1221,21 @@ class ReportGenerator:
                 print(f"   - {result.test_case}: {result.actual_result}")
 
 
+def load_pipeline_config(config_file: str) -> Dict[str, Any]:
+    """Load pipeline configuration from JSON file"""
+    try:
+        with open(config_file, 'r') as f:
+            config = json.load(f)
+        print(f"✓ Loaded pipeline configuration from: {config_file}")
+        return config
+    except FileNotFoundError:
+        raise ValueError(f"Pipeline configuration file not found: {config_file}")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in pipeline configuration file: {e}")
+    except Exception as e:
+        raise ValueError(f"Error loading pipeline configuration: {e}")
+
+
 def main():
     """Main function"""
     parser = argparse.ArgumentParser(
@@ -1329,23 +1243,44 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Test all pipeline operations
-  python %(prog)s --project my-project --location us-central1 --instance my-instance
+  # Test all pipeline operations with a pipeline config file
+  python %(prog)s --project my-project --location us-central1 --instance my-instance --pipeline-config my-pipeline.json
   
   # Test in specific namespace
-  python %(prog)s --project my-project --location us-central1 --instance my-instance --namespace production
+  python %(prog)s --project my-project --location us-central1 --instance my-instance --namespace production --pipeline-config pipeline.json
   
   # Skip cleanup (keep test resources)
-  python %(prog)s --project my-project --location us-central1 --instance my-instance --skip-cleanup
+  python %(prog)s --project my-project --location us-central1 --instance my-instance --skip-cleanup --pipeline-config pipeline.json
   
   # Generate custom report filename
-  python %(prog)s --project my-project --location us-central1 --instance my-instance --output my-report.csv
+  python %(prog)s --project my-project --location us-central1 --instance my-instance --output my-report.csv --pipeline-config pipeline.json
+
+Pipeline Configuration JSON Format:
+  The pipeline configuration file should be a valid Data Fusion pipeline JSON export.
+  Example structure:
+  {
+    "name": "my-pipeline",
+    "description": "Pipeline description",
+    "artifact": {
+      "name": "cdap-data-pipeline",
+      "version": "[6.0.0, 7.0.0)",
+      "scope": "SYSTEM"
+    },
+    "config": {
+      "stages": [...],
+      "connections": [...],
+      "resources": {...},
+      "driverResources": {...},
+      "engine": "spark"
+    }
+  }
         """
     )
     
     parser.add_argument('--project', required=True, help='GCP Project ID')
     parser.add_argument('--location', required=True, help='GCP Location/Region (e.g., us-central1)')
     parser.add_argument('--instance', required=True, help='Data Fusion instance name')
+    parser.add_argument('--pipeline-config', required=True, help='Pipeline configuration JSON file')
     parser.add_argument('--namespace', default='default', help='CDAP namespace (default: default)')
     parser.add_argument('--skip-cleanup', action='store_true', 
                        help='Skip cleanup of test resources')
@@ -1361,13 +1296,17 @@ Examples:
             print("Run: export GOOGLE_AUTH_TOKEN=$(gcloud auth print-access-token)")
             return
         
+        # Load pipeline configuration
+        pipeline_config = load_pipeline_config(args.pipeline_config)
+        
         # Initialize configuration
         config = Config(
             project_id=args.project,
             location=args.location,
             instance_name=args.instance,
             namespace=args.namespace,
-            auth_token=auth_token
+            auth_token=auth_token,
+            pipeline_config_file=args.pipeline_config
         )
         
         # Get instance API endpoint
@@ -1378,7 +1317,7 @@ Examples:
         
         # Create CDAP client and run tests
         cdap_client = CDAPClient(api_endpoint, config)
-        runner = PipelineTestRunner(cdap_client, args.skip_cleanup)
+        runner = PipelineTestRunner(cdap_client, pipeline_config, args.skip_cleanup)
         test_results = runner.run_tests()
         
         # Generate reports
