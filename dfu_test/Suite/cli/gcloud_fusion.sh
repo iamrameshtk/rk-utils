@@ -4,7 +4,11 @@
 # Google Cloud Data Fusion CLI Test Script
 # Description: Tests all available gcloud beta data-fusion CLI commands
 # Author: Cloud Data Fusion Test Automation
-# Version: 1.0
+# Version: 1.2
+# 
+# IMPORTANT: This script is designed for users with custom role permissions 
+# that include only read operations. All update/modify operations are 
+# expected to fail due to insufficient permissions.
 ###############################################################################
 
 # Color codes for output
@@ -199,35 +203,34 @@ execute_test "TC006" "Get IAM policy" "gcloud beta data-fusion get-iam-policy $I
 # Test Case 7: List operations
 execute_test "TC007" "List operations" "gcloud beta data-fusion operations list --location=$LOCATION --format=json"
 
-# Test Case 8: Update instance (add label)
+# Test Case 8: Update instance (add label) - EXPECTED TO FAIL WITH CUSTOM ROLE PERMISSIONS
 TEST_LABEL_KEY="test-run"
 TEST_LABEL_VALUE="automated-${TIMESTAMP}"
-execute_test "TC008" "Update instance labels" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --update-labels=${TEST_LABEL_KEY}=${TEST_LABEL_VALUE}"
+execute_test "TC008" "Update instance labels" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --update-labels=${TEST_LABEL_KEY}=${TEST_LABEL_VALUE}" "true"
 
-# Test Case 9: Update instance options
-execute_test "TC009" "Update instance options" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --options=system.profile.properties.dataproc.preferExternalIP=true"
+# Test Case 9: Update instance options - EXPECTED TO FAIL WITH CUSTOM ROLE PERMISSIONS
+execute_test "TC009" "Update instance options" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --options=system.profile.properties.dataproc.preferExternalIP=true" "true"
 
-# Test Case 10: Restart instance
-execute_test "TC010" "Restart instance" "gcloud beta data-fusion instances restart $INSTANCE_NAME --location=$LOCATION --async"
+# Test Case 10: Restart instance - EXPECTED TO FAIL WITH CUSTOM ROLE PERMISSIONS
+execute_test "TC010" "Restart instance" "gcloud beta data-fusion instances restart $INSTANCE_NAME --location=$LOCATION --async" "true"
 
-# Test Case 11: Wait for restart operation
-log "Waiting 30 seconds for restart operation to complete..."
-sleep 30
+# Test Case 11: Skip wait since restart won't happen with custom role permissions
+log "Skipping wait for restart operation (custom role permissions don't allow restart)"
 
-# Test Case 12: Enable stack driver logging
-execute_test "TC012" "Enable Stackdriver logging" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --enable_stackdriver_logging"
+# Test Case 12: Enable stack driver logging - EXPECTED TO FAIL WITH CUSTOM ROLE PERMISSIONS
+execute_test "TC012" "Enable Stackdriver logging" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --enable_stackdriver_logging" "true"
 
-# Test Case 13: Enable stack driver monitoring
-execute_test "TC013" "Enable Stackdriver monitoring" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --enable_stackdriver_monitoring"
+# Test Case 13: Enable stack driver monitoring - EXPECTED TO FAIL WITH CUSTOM ROLE PERMISSIONS
+execute_test "TC013" "Enable Stackdriver monitoring" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --enable_stackdriver_monitoring" "true"
 
-# Test Case 14: Update instance description
-execute_test "TC014" "Update instance description" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --description='Updated by automated test at ${TIMESTAMP}'"
+# Test Case 14: Update instance description - EXPECTED TO FAIL WITH CUSTOM ROLE PERMISSIONS
+execute_test "TC014" "Update instance description" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --description='Updated by automated test at ${TIMESTAMP}'" "true"
 
-# Test Case 15: Add IAM policy binding
+# Test Case 15: Add IAM policy binding - EXPECTED TO FAIL WITH CUSTOM ROLE PERMISSIONS
 TEST_USER="user:test-automation@example.com"
 execute_test "TC015" "Add IAM policy binding" "gcloud beta data-fusion add-iam-policy-binding $INSTANCE_NAME --location=$LOCATION --member=$TEST_USER --role=roles/datafusion.viewer" "true"
 
-# Test Case 16: Remove IAM policy binding
+# Test Case 16: Remove IAM policy binding - EXPECTED TO FAIL WITH CUSTOM ROLE PERMISSIONS
 execute_test "TC016" "Remove IAM policy binding" "gcloud beta data-fusion remove-iam-policy-binding $INSTANCE_NAME --location=$LOCATION --member=$TEST_USER --role=roles/datafusion.viewer" "true"
 
 # Test Case 17: Get API endpoint
@@ -254,11 +257,11 @@ execute_test "TC023" "Get private instance status" "gcloud beta data-fusion inst
 # Test Case 24: Get network config
 execute_test "TC024" "Get network config" "gcloud beta data-fusion instances describe $INSTANCE_NAME --location=$LOCATION --format='value(networkConfig)'"
 
-# Test Case 25: Update instance with zone
+# Test Case 25: Update instance with zone - EXPECTED TO FAIL WITH CUSTOM ROLE PERMISSIONS
 execute_test "TC025" "Update instance zone" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --zone=${LOCATION}-a" "true"
 
-# Test Case 26: Clear labels
-execute_test "TC026" "Clear instance labels" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --clear-labels"
+# Test Case 26: Clear labels - EXPECTED TO FAIL WITH CUSTOM ROLE PERMISSIONS
+execute_test "TC026" "Clear instance labels" "gcloud beta data-fusion instances update $INSTANCE_NAME --location=$LOCATION --clear-labels" "true"
 
 # Test Case 27: List operations with filter
 execute_test "TC027" "List operations with filter" "gcloud beta data-fusion operations list --location=$LOCATION --filter='name:$INSTANCE_NAME' --format=json"
@@ -266,7 +269,7 @@ execute_test "TC027" "List operations with filter" "gcloud beta data-fusion oper
 # Test Case 28: Describe latest operation
 execute_test "TC028" "Describe latest operation" "gcloud beta data-fusion operations list --location=$LOCATION --limit=1 --format='value(name)' | xargs -I {} gcloud beta data-fusion operations describe {} --location=$LOCATION" "true"
 
-# Test Case 29: Set IAM policy from file
+# Test Case 29: Set IAM policy from file - EXPECTED TO FAIL WITH CUSTOM ROLE PERMISSIONS
 # Create a temporary IAM policy file
 IAM_POLICY_FILE="$OUTPUT_DIR/test_iam_policy.json"
 cat > "$IAM_POLICY_FILE" << EOF
@@ -297,11 +300,11 @@ FAILED_TESTS=$(grep -c ",FAIL," "$CSV_FILE")
 EXPECTED_FAILURES=$(grep -c ",EXPECTED_FAIL," "$CSV_FILE")
 UNEXPECTED_PASSES=$(grep -c ",UNEXPECTED_PASS," "$CSV_FILE")
 
-# Calculate pass rate
+# Calculate success rate (PASS + EXPECTED_FAIL)
 if [ $TOTAL_TESTS -gt 0 ]; then
-    PASS_RATE=$(awk "BEGIN {printf \"%.2f\", ($PASSED_TESTS/$TOTAL_TESTS)*100}")
+    SUCCESS_RATE=$(awk "BEGIN {printf \"%.2f\", (($PASSED_TESTS + $EXPECTED_FAILURES)/$TOTAL_TESTS)*100}")
 else
-    PASS_RATE=0
+    SUCCESS_RATE=0
 fi
 
 # Write test summary
@@ -314,15 +317,19 @@ Project ID: $PROJECT_ID
 Location: $LOCATION
 Instance Name: $INSTANCE_NAME
 Namespace: $NAMESPACE
+User Permissions: Custom Role (Read-Only)
 
 Test Results:
 -------------
 Total Tests Executed: $TOTAL_TESTS
-Passed: $PASSED_TESTS
-Failed: $FAILED_TESTS
-Expected Failures: $EXPECTED_FAILURES
+Passed (Read Operations): $PASSED_TESTS
+Failed (Unexpected): $FAILED_TESTS
+Expected Failures (Write Operations): $EXPECTED_FAILURES
 Unexpected Passes: $UNEXPECTED_PASSES
-Pass Rate: ${PASS_RATE}%
+Success Rate: ${SUCCESS_RATE}%
+
+Note: Success rate includes both PASS and EXPECTED_FAIL results.
+Write operations are expected to fail with custom role read-only permissions.
 
 Output Files:
 -------------
@@ -363,10 +370,13 @@ cat > "$HTML_REPORT" << EOF
         <p><strong>Project:</strong> $PROJECT_ID</p>
         <p><strong>Location:</strong> $LOCATION</p>
         <p><strong>Instance:</strong> $INSTANCE_NAME</p>
+        <p><strong>User Permissions:</strong> Custom Role (Read-Only)</p>
         <p><strong>Total Tests:</strong> $TOTAL_TESTS</p>
-        <p><strong>Passed:</strong> $PASSED_TESTS</p>
-        <p><strong>Failed:</strong> $FAILED_TESTS</p>
-        <p><strong>Pass Rate:</strong> ${PASS_RATE}%</p>
+        <p><strong>Passed (Read Operations):</strong> $PASSED_TESTS</p>
+        <p><strong>Failed (Unexpected):</strong> $FAILED_TESTS</p>
+        <p><strong>Expected Failures (Write Operations):</strong> $EXPECTED_FAILURES</p>
+        <p><strong>Success Rate:</strong> ${SUCCESS_RATE}%</p>
+        <p><em>Note: Write operations are expected to fail with custom role read-only permissions.</em></p>
     </div>
     <h2>Test Results</h2>
     <table>
