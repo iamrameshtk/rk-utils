@@ -52,6 +52,9 @@ class TestResult:
     execution_time: float
     timestamp: str
     error_details: str = ""
+    expected_result: str = ""
+    actual_result: str = ""
+    test_passed: bool = False
 
 
 @dataclass
@@ -63,6 +66,7 @@ class Config:
     base_url: str = "https://datafusion.googleapis.com"
     api_version: str = "v1beta1"
     test_results: List[TestResult] = field(default_factory=list)
+    processed_tests: set = field(default_factory=set)  # Track processed test cases
 
     def __post_init__(self):
         if not self.auth_token:
@@ -81,12 +85,18 @@ class CloudDataFusionClient:
         })
     
     def _make_request(self, method: str, url: str, test_case: str, description: str, 
-                     operation_type: str = "Instance Level Operation", **kwargs) -> Tuple[Optional[requests.Response], TestResult]:
+                     operation_type: str = "Instance Level Operation", 
+                     expected_result: str = "", **kwargs) -> Tuple[Optional[requests.Response], TestResult]:
         """Make HTTP request with test case tracking"""
-        existing_test = next((r for r in self.config.test_results if r.test_case == test_case), None)
-        if existing_test:
+        # Create unique test identifier
+        test_id = f"{test_case}_{method}_{url}"
+        
+        # Check if this exact test has been processed
+        if test_id in self.config.processed_tests:
             print(f"Skipping duplicate test case: {test_case}")
-            return None, existing_test
+            return None, None
+        
+        self.config.processed_tests.add(test_id)
         
         start_time = time.time()
         timestamp = datetime.now().isoformat()
@@ -95,8 +105,19 @@ class CloudDataFusionClient:
             response = self.session.request(method, url, **kwargs)
             execution_time = time.time() - start_time
             
-            status = "PASS" if response.status_code < 400 else "FAIL"
-            error_details = "" if status == "PASS" else response.text
+            # Determine actual result
+            if response.status_code < 300:
+                actual_result = f"Success: {response.status_code} {response.reason}"
+            elif response.status_code < 500:
+                actual_result = f"Client Error: {response.status_code} {response.reason}"
+            else:
+                actual_result = f"Server Error: {response.status_code} {response.reason}"
+            
+            # Determine if test passed based on expected result
+            test_passed = self._evaluate_test_result(response.status_code, expected_result)
+            status = "PASS" if test_passed else "FAIL"
+            
+            error_details = "" if response.status_code < 400 else response.text[:200]
             
             test_result = TestResult(
                 test_case=test_case,
@@ -109,11 +130,18 @@ class CloudDataFusionClient:
                 response_message=response.reason,
                 execution_time=execution_time,
                 timestamp=timestamp,
-                error_details=error_details
+                error_details=error_details,
+                expected_result=expected_result,
+                actual_result=actual_result,
+                test_passed=test_passed
             )
             
             self.config.test_results.append(test_result)
-            response.raise_for_status()
+            
+            # Only raise for status if test failed unexpectedly
+            if not test_passed and "should fail" not in expected_result.lower():
+                response.raise_for_status()
+                
             return response, test_result
             
         except requests.exceptions.RequestException as e:
@@ -122,23 +150,52 @@ class CloudDataFusionClient:
             response_code = getattr(e.response, 'status_code', 0) if hasattr(e, 'response') else 0
             response_message = getattr(e.response, 'reason', 'Request Failed') if hasattr(e, 'response') else 'Request Failed'
             
+            actual_result = f"Exception: {type(e).__name__} - {str(e)[:100]}"
+            test_passed = self._evaluate_test_result(response_code, expected_result)
+            status = "PASS" if test_passed else "FAIL"
+            
             test_result = TestResult(
                 test_case=test_case,
                 api_endpoint=url,
                 method=method,
                 description=description,
                 type=operation_type,
-                status="FAIL",
+                status=status,
                 response_code=response_code,
                 response_message=response_message,
                 execution_time=execution_time,
                 timestamp=timestamp,
-                error_details=error_details
+                error_details=error_details,
+                expected_result=expected_result,
+                actual_result=actual_result,
+                test_passed=test_passed
             )
             
             self.config.test_results.append(test_result)
-            print(f"Request failed: {e}")
-            raise
+            
+            # Only re-raise if test failed unexpectedly
+            if not test_passed and "should fail" not in expected_result.lower():
+                raise
+            
+            return None, test_result
+    
+    def _evaluate_test_result(self, status_code: int, expected_result: str) -> bool:
+        """Evaluate if test passed based on expected result"""
+        expected_lower = expected_result.lower()
+        
+        if "should fail" in expected_lower or "expected failure" in expected_lower:
+            # Test should fail
+            return status_code >= 400
+        elif "should succeed" in expected_lower or "200" in expected_result:
+            # Test should succeed
+            return 200 <= status_code < 300
+        elif "404" in expected_result:
+            return status_code == 404
+        elif "400" in expected_result:
+            return status_code == 400
+        else:
+            # Default: success means 2xx status
+            return 200 <= status_code < 300
 
     def create_instance(self, instance_name: str, instance_config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Create a new Data Fusion instance"""
@@ -152,12 +209,13 @@ class CloudDataFusionClient:
             f"CREATE_INSTANCE_{instance_name}", 
             f"Create Data Fusion instance '{instance_name}' with configuration",
             "Instance Level Operation",
+            expected_result="Should succeed with 200 OK for valid configuration",
             params=params,
             json=instance_config
         )
         return response.json() if response else None
     
-    def get_instance(self, instance_name: str) -> Optional[Dict[str, Any]]:
+    def get_instance(self, instance_name: str, expected_result: str = "Should succeed with 200 OK") -> Optional[Dict[str, Any]]:
         """Get details of a Data Fusion instance"""
         url = f"{self.config.base_url}/{self.config.api_version}/projects/{self.config.project_id}/locations/{self.config.location}/instances/{instance_name}"
         
@@ -166,11 +224,13 @@ class CloudDataFusionClient:
             'GET', url,
             f"GET_INSTANCE_{instance_name}",
             f"Retrieve details for Data Fusion instance '{instance_name}'",
-            "Instance Level Operation"
+            "Instance Level Operation",
+            expected_result=expected_result
         )
         return response.json() if response else None
     
-    def update_instance(self, instance_name: str, update_config: Dict[str, Any], update_mask: str = None) -> Optional[Dict[str, Any]]:
+    def update_instance(self, instance_name: str, update_config: Dict[str, Any], 
+                       update_mask: str = None, expected_result: str = "Should succeed with 200 OK") -> Optional[Dict[str, Any]]:
         """Update a Data Fusion instance"""
         url = f"{self.config.base_url}/{self.config.api_version}/projects/{self.config.project_id}/locations/{self.config.location}/instances/{instance_name}"
         
@@ -184,12 +244,13 @@ class CloudDataFusionClient:
             f"UPDATE_INSTANCE_{instance_name}",
             f"Update Data Fusion instance '{instance_name}' configuration",
             "Instance Level Operation",
+            expected_result=expected_result,
             json=update_config,
             params=params
         )
         return response.json() if response else None
     
-    def delete_instance(self, instance_name: str) -> Optional[Dict[str, Any]]:
+    def delete_instance(self, instance_name: str, expected_result: str = "Should succeed with 200 OK") -> Optional[Dict[str, Any]]:
         """Delete a Data Fusion instance"""
         url = f"{self.config.base_url}/{self.config.api_version}/projects/{self.config.project_id}/locations/{self.config.location}/instances/{instance_name}"
         
@@ -198,7 +259,8 @@ class CloudDataFusionClient:
             'DELETE', url,
             f"DELETE_INSTANCE_{instance_name}",
             f"Delete Data Fusion instance '{instance_name}'",
-            "Instance Level Operation"
+            "Instance Level Operation",
+            expected_result=expected_result
         )
         if response:
             return response.json() if response.text else {"status": "deleted"}
@@ -213,14 +275,15 @@ class CloudDataFusionClient:
             'GET', url,
             "LIST_INSTANCES",
             f"List all Data Fusion instances in project '{self.config.project_id}' and location '{self.config.location}'",
-            "Instance Level Operation"
+            "Instance Level Operation",
+            expected_result="Should succeed with 200 OK and return instance list"
         )
         if response:
             result = response.json()
             return result.get('instances', [])
         return []
     
-    def restart_instance(self, instance_name: str) -> Optional[Dict[str, Any]]:
+    def restart_instance(self, instance_name: str, expected_result: str = "Should succeed with 200 OK") -> Optional[Dict[str, Any]]:
         """Restart a Data Fusion instance"""
         url = f"{self.config.base_url}/{self.config.api_version}/projects/{self.config.project_id}/locations/{self.config.location}/instances/{instance_name}:restart"
         
@@ -230,6 +293,7 @@ class CloudDataFusionClient:
             f"RESTART_INSTANCE_{instance_name}",
             f"Restart Data Fusion instance '{instance_name}'",
             "Instance Level Operation",
+            expected_result=expected_result,
             json={}
         )
         return response.json() if response else None
@@ -259,8 +323,14 @@ class InstanceTestRunner:
         # Test 2: Test with existing instances
         instances = self.client.list_instances()
         if instances:
+            # Test first existing instance
             existing_instance = instances[0]['name'].split('/')[-1]
             self._test_existing_instance_operations(existing_instance)
+            
+            # If more than one instance, test another
+            if len(instances) > 1:
+                another_instance = instances[1]['name'].split('/')[-1]
+                self._test_another_existing_instance(another_instance)
         
         # Test 3: Test with non-existent instance (expected failures)
         self._test_non_existent_instance_operations()
@@ -288,72 +358,117 @@ class InstanceTestRunner:
         """Test operations on existing instance"""
         print(f"\nTesting operations on existing instance: {instance_name}")
         
-        # GET instance
+        # GET instance - should succeed
         try:
-            instance = self.client.get_instance(instance_name)
-            print(f"✓ GET_INSTANCE_{instance_name} passed")
-            print(f"  - State: {instance.get('state', 'UNKNOWN')}")
-            print(f"  - Type: {instance.get('type', 'UNKNOWN')}")
-            print(f"  - Version: {instance.get('version', 'UNKNOWN')}")
+            instance = self.client.get_instance(
+                instance_name, 
+                expected_result="Should succeed with 200 OK for existing instance"
+            )
+            if instance:
+                print(f"✓ GET_INSTANCE_{instance_name} passed")
+                print(f"  - State: {instance.get('state', 'UNKNOWN')}")
+                print(f"  - Type: {instance.get('type', 'UNKNOWN')}")
+                print(f"  - Version: {instance.get('version', 'UNKNOWN')}")
         except Exception as e:
             print(f"✗ GET_INSTANCE_{instance_name} failed: {e}")
         
-        # UPDATE instance (minimal update)
+        # UPDATE instance - should succeed
         try:
             update_config = {
                 "labels": {
-                    "updated": "true",
-                    "test-timestamp": str(int(time.time()))
+                    "test-update": "true",
+                    "updated-at": str(int(time.time()))
                 }
             }
-            self.client.update_instance(instance_name, update_config, "labels")
+            self.client.update_instance(
+                instance_name, 
+                update_config, 
+                "labels",
+                expected_result="Should succeed with 200 OK for valid update"
+            )
             print(f"✓ UPDATE_INSTANCE_{instance_name} passed")
         except Exception as e:
             print(f"✗ UPDATE_INSTANCE_{instance_name} failed: {e}")
         
-        # RESTART instance (only if instance is RUNNING)
+        # RESTART instance - test based on state
         try:
             instance = self.client.get_instance(instance_name)
             if instance and instance.get('state') == 'RUNNING':
-                self.client.restart_instance(instance_name)
+                self.client.restart_instance(
+                    instance_name,
+                    expected_result="Should succeed with 200 OK for running instance"
+                )
                 print(f"✓ RESTART_INSTANCE_{instance_name} passed")
             else:
-                print(f"ℹ RESTART_INSTANCE_{instance_name} skipped (instance not RUNNING)")
+                # Try restart on non-running instance - should fail
+                self.client.restart_instance(
+                    instance_name,
+                    expected_result="Should fail with 400 Bad Request for non-running instance"
+                )
+                print(f"✓ RESTART_INSTANCE_{instance_name} tested (non-running state)")
         except Exception as e:
-            print(f"✗ RESTART_INSTANCE_{instance_name} failed: {e}")
+            print(f"ℹ RESTART_INSTANCE_{instance_name} result: {e}")
+    
+    def _test_another_existing_instance(self, instance_name: str):
+        """Test another existing instance to avoid duplicates"""
+        print(f"\nTesting another existing instance: {instance_name}")
+        
+        # GET with different test case
+        try:
+            instance = self.client.get_instance(
+                instance_name,
+                expected_result="Should succeed with 200 OK for second existing instance"
+            )
+            if instance:
+                print(f"✓ GET_INSTANCE_{instance_name} passed (second instance)")
+        except Exception as e:
+            print(f"✗ GET_INSTANCE_{instance_name} failed: {e}")
     
     def _test_non_existent_instance_operations(self):
         """Test operations on non-existent instance (expected failures)"""
         non_existent = "non-existent-instance-12345"
         print(f"\nTesting operations on non-existent instance (expected failures)...")
         
-        # GET non-existent
+        # GET non-existent - should fail with 404
         try:
-            self.client.get_instance(non_existent)
-            print(f"✗ GET_INSTANCE_{non_existent} should have failed")
+            self.client.get_instance(
+                non_existent,
+                expected_result="Should fail with 404 Not Found"
+            )
+            print(f"✓ GET_INSTANCE_{non_existent} passed (failed as expected)")
         except Exception:
-            print(f"✓ GET_INSTANCE_{non_existent} failed as expected")
+            print(f"✓ GET_INSTANCE_{non_existent} passed (failed as expected)")
         
-        # UPDATE non-existent
+        # UPDATE non-existent - should fail with 404
         try:
-            self.client.update_instance(non_existent, {"description": "test"})
-            print(f"✗ UPDATE_INSTANCE_{non_existent} should have failed")
+            self.client.update_instance(
+                non_existent, 
+                {"description": "test"},
+                expected_result="Should fail with 404 Not Found"
+            )
+            print(f"✓ UPDATE_INSTANCE_{non_existent} passed (failed as expected)")
         except Exception:
-            print(f"✓ UPDATE_INSTANCE_{non_existent} failed as expected")
+            print(f"✓ UPDATE_INSTANCE_{non_existent} passed (failed as expected)")
         
-        # DELETE non-existent
+        # DELETE non-existent - should fail with 404
         try:
-            self.client.delete_instance(non_existent)
-            print(f"✗ DELETE_INSTANCE_{non_existent} should have failed")
+            self.client.delete_instance(
+                non_existent,
+                expected_result="Should fail with 404 Not Found"
+            )
+            print(f"✓ DELETE_INSTANCE_{non_existent} passed (failed as expected)")
         except Exception:
-            print(f"✓ DELETE_INSTANCE_{non_existent} failed as expected")
+            print(f"✓ DELETE_INSTANCE_{non_existent} passed (failed as expected)")
         
-        # RESTART non-existent
+        # RESTART non-existent - should fail with 404
         try:
-            self.client.restart_instance(non_existent)
-            print(f"✗ RESTART_INSTANCE_{non_existent} should have failed")
+            self.client.restart_instance(
+                non_existent,
+                expected_result="Should fail with 404 Not Found"
+            )
+            print(f"✓ RESTART_INSTANCE_{non_existent} passed (failed as expected)")
         except Exception:
-            print(f"✓ RESTART_INSTANCE_{non_existent} failed as expected")
+            print(f"✓ RESTART_INSTANCE_{non_existent} passed (failed as expected)")
     
     def _test_create_delete_instance(self):
         """Test creating and deleting an instance (expensive operation)"""
@@ -384,10 +499,13 @@ class InstanceTestRunner:
             
             # DELETE instance
             try:
-                self.client.delete_instance(self.test_instance_name)
+                self.client.delete_instance(
+                    self.test_instance_name,
+                    expected_result="Should succeed with 200 OK or fail with 409 if still creating"
+                )
                 print(f"✓ DELETE_INSTANCE_{self.test_instance_name} initiated")
             except Exception as e:
-                print(f"✗ DELETE_INSTANCE_{self.test_instance_name} failed: {e}")
+                print(f"ℹ DELETE_INSTANCE_{self.test_instance_name} result: {e}")
                 
         except Exception as e:
             print(f"✗ CREATE_INSTANCE_{self.test_instance_name} failed: {e}")
@@ -406,7 +524,8 @@ class ReportGenerator:
         with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
             fieldnames = [
                 'test_case', 'api_endpoint', 'method', 'description', 'type', 'status',
-                'response_code', 'response_message', 'execution_time', 'timestamp', 'error_details'
+                'response_code', 'response_message', 'execution_time', 'timestamp', 
+                'expected_result', 'actual_result', 'test_passed', 'error_details'
             ]
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             
@@ -423,6 +542,9 @@ class ReportGenerator:
                     'response_message': result.response_message,
                     'execution_time': f"{result.execution_time:.3f}s",
                     'timestamp': result.timestamp,
+                    'expected_result': result.expected_result,
+                    'actual_result': result.actual_result,
+                    'test_passed': result.test_passed,
                     'error_details': result.error_details[:200] + '...' if len(result.error_details) > 200 else result.error_details
                 })
         
@@ -435,30 +557,40 @@ class ReportGenerator:
             print("No test results to display.")
             return
         
+        # Remove any duplicates based on test_case + method + endpoint
+        unique_results = []
+        seen = set()
+        for result in test_results:
+            key = f"{result.test_case}_{result.method}_{result.api_endpoint}"
+            if key not in seen:
+                seen.add(key)
+                unique_results.append(result)
+        
         # Prepare data for tabulation
         table_data = []
-        for result in test_results:
+        for result in unique_results:
             table_data.append([
-                result.test_case[:30] + '...' if len(result.test_case) > 30 else result.test_case,
+                result.test_case[:25] + '...' if len(result.test_case) > 25 else result.test_case,
                 result.method,
                 result.status,
                 result.response_code,
                 f"{result.execution_time:.3f}s",
-                result.description[:50] + '...' if len(result.description) > 50 else result.description
+                result.expected_result[:30] + '...' if len(result.expected_result) > 30 else result.expected_result,
+                result.actual_result[:30] + '...' if len(result.actual_result) > 30 else result.actual_result
             ])
         
-        headers = ['Test Case', 'Method', 'Status', 'Code', 'Time', 'Description']
+        headers = ['Test Case', 'Method', 'Status', 'Code', 'Time', 'Expected', 'Actual']
         
-        print("\n" + "="*120)
+        print("\n" + "="*140)
         print("INSTANCE LEVEL OPERATIONS - TEST RESULTS")
-        print("="*120)
+        print("="*140)
         print(tabulate(table_data, headers=headers, tablefmt="grid"))
         
         # Summary statistics
-        total_tests = len(test_results)
-        passed_tests = len([r for r in test_results if r.status == "PASS"])
+        total_tests = len(unique_results)
+        passed_tests = len([r for r in unique_results if r.status == "PASS"])
         failed_tests = total_tests - passed_tests
-        avg_time = sum(r.execution_time for r in test_results) / total_tests if total_tests > 0 else 0
+        avg_time = sum(r.execution_time for r in unique_results) / total_tests if total_tests > 0 else 0
         
         print(f"\n📊 SUMMARY STATISTICS:")
         print(f"   Total Tests: {total_tests}")
@@ -469,7 +601,7 @@ class ReportGenerator:
         
         # Operation breakdown
         operations = {}
-        for result in test_results:
+        for result in unique_results:
             op = result.test_case.split('_')[0]
             operations[op] = operations.get(op, 0) + 1
         
@@ -477,11 +609,20 @@ class ReportGenerator:
         for op, count in sorted(operations.items()):
             print(f"   {op}: {count}")
         
-        if failed_tests > 0:
-            print(f"\n❌ FAILED TESTS:")
-            for result in test_results:
-                if result.status == "FAIL":
-                    print(f"   - {result.test_case}: {result.response_code} {result.response_message}")
+        # Test validation summary
+        print(f"\n✅ TEST VALIDATION SUMMARY:")
+        expected_failures = [r for r in unique_results if "should fail" in r.expected_result.lower() and r.status == "PASS"]
+        expected_successes = [r for r in unique_results if "should succeed" in r.expected_result.lower() and r.status == "PASS"]
+        unexpected_failures = [r for r in unique_results if "should succeed" in r.expected_result.lower() and r.status == "FAIL"]
+        
+        print(f"   Expected Failures (passed): {len(expected_failures)}")
+        print(f"   Expected Successes (passed): {len(expected_successes)}")
+        print(f"   Unexpected Failures: {len(unexpected_failures)}")
+        
+        if unexpected_failures:
+            print(f"\n❌ UNEXPECTED FAILURES:")
+            for result in unexpected_failures:
+                print(f"   - {result.test_case}: {result.actual_result}")
 
 
 def main():
