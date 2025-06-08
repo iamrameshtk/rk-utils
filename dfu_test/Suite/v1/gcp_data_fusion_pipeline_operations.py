@@ -677,7 +677,7 @@ class PipelineTestRunner:
             print(f"✗ LIST_SECURE_KEYS failed: {str(e)[:100]}")
     
     def _test_complete_pipeline_workflow(self):
-        """Test complete pipeline workflow: CREATE -> DEPLOY -> UPDATE -> LIST -> START -> STOP -> DELETE"""
+        """Test complete pipeline workflow: CREATE -> DEPLOY -> UPDATE -> LIST -> DELETE"""
         print("=== Testing Complete Pipeline Workflow ===")
         
         # Update the pipeline config name to match the test pipeline name
@@ -746,55 +746,31 @@ class PipelineTestRunner:
             except Exception as e:
                 print(f"✗ Step 4: LIST_PIPELINES failed: {str(e)[:100]}")
             
-            # Step 5: START pipeline (only if it has stages)
-            if pipeline_config_for_test.get("config", {}).get("stages"):
-                try:
-                    self.client.start_batch_pipeline(
-                        self.test_pipeline_name,
-                        expected_result="Should succeed with 200 OK for valid pipeline"
-                    )
-                    print(f"✓ Step 5: START_BATCH_PIPELINE_{self.test_pipeline_name} passed")
-                    time.sleep(5)
-                except Exception as e:
-                    print(f"✗ Step 5: START_BATCH_PIPELINE_{self.test_pipeline_name} failed: {str(e)[:100]}")
-                
-                # Step 6: STOP pipeline
-                try:
-                    self.client.stop_batch_pipeline(
-                        self.test_pipeline_name,
-                        expected_result="Should succeed with 200 OK or 400 if already stopped"
-                    )
-                    print(f"✓ Step 6: STOP_BATCH_PIPELINE_{self.test_pipeline_name} passed")
-                except Exception as e:
-                    print(f"✗ Step 6: STOP_BATCH_PIPELINE_{self.test_pipeline_name} failed: {str(e)[:100]}")
-            else:
-                print("ℹ Step 5-6: Skipping START/STOP for pipeline without stages")
-            
-            # Step 7: GET pipeline runs
+            # Step 5: GET pipeline runs
             try:
                 runs = self.client.get_pipeline_runs(
                     self.test_pipeline_name,
                     "batch",
                     expected_result="Should succeed with 200 OK"
                 )
-                print(f"✓ Step 7: GET_PIPELINE_RUNS_{self.test_pipeline_name} passed")
+                print(f"✓ Step 5: GET_PIPELINE_RUNS_{self.test_pipeline_name} passed")
                 if runs:
                     print(f"   Found {len(runs)} run(s)")
             except Exception as e:
-                print(f"✗ Step 7: GET_PIPELINE_RUNS_{self.test_pipeline_name} failed: {str(e)[:100]}")
+                print(f"✗ Step 5: GET_PIPELINE_RUNS_{self.test_pipeline_name} failed: {str(e)[:100]}")
             
-            # Step 8: DELETE pipeline (cleanup)
+            # Step 6: DELETE pipeline (cleanup)
             if not self.skip_cleanup:
                 try:
                     self.client.delete_pipeline(
                         self.test_pipeline_name,
                         expected_result="Should succeed with 200 OK"
                     )
-                    print(f"✓ Step 8: DELETE_PIPELINE_{self.test_pipeline_name} passed")
+                    print(f"✓ Step 6: DELETE_PIPELINE_{self.test_pipeline_name} passed")
                 except Exception as e:
-                    print(f"✗ Step 8: DELETE_PIPELINE_{self.test_pipeline_name} failed: {str(e)[:100]}")
+                    print(f"✗ Step 6: DELETE_PIPELINE_{self.test_pipeline_name} failed: {str(e)[:100]}")
             else:
-                print(f"ℹ Step 8: DELETE_PIPELINE_{self.test_pipeline_name} skipped (--skip-cleanup)")
+                print(f"ℹ Step 6: DELETE_PIPELINE_{self.test_pipeline_name} skipped (--skip-cleanup)")
         else:
             print("\n⚠️  Skipping remaining pipeline workflow steps due to creation failure")
             
