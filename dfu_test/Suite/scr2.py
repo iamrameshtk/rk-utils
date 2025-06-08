@@ -22,7 +22,7 @@ Requirements:
 
 Usage:
     export GOOGLE_AUTH_TOKEN=$(gcloud auth print-access-token)
-    python data_fusion_namespace_system.py
+    python gcp_data_fusion_namespace_system.py
 """
 
 import os
@@ -79,7 +79,7 @@ class CloudDataFusionClient:
             'Content-Type': 'application/json'
         })
     
-    def _make_request(self, method: str, url: str, test_case: str, description: str, operation_type: str = "Instance Level Operation", **kwargs) -> Tuple[requests.Response, TestResult]:
+    def _make_request(self, method: str, url: str, test_case: str, description: str, operation_type: str = "Instance Level Operation", **kwargs) -> Tuple[Optional[requests.Response], TestResult]:
         """Make HTTP request with test case tracking - prevents duplicates"""
         # Check for duplicate test cases
         existing_test = next((r for r in self.config.test_results if r.test_case == test_case), None)
@@ -145,7 +145,7 @@ class CloudDataFusionClient:
                 print(f"Response content: {e.response.text}")
             raise
 
-    def get_instance(self, instance_name: str) -> Dict[str, Any]:
+    def get_instance(self, instance_name: str) -> Optional[Dict[str, Any]]:
         """Get details of a Data Fusion instance"""
         url = f"{self.config.base_url}/{self.config.api_version}/projects/{self.config.project_id}/locations/{self.config.location}/instances/{instance_name}"
         
@@ -156,7 +156,7 @@ class CloudDataFusionClient:
             f"Retrieve details for Data Fusion instance '{instance_name}'",
             "Instance Level Operation"
         )
-        return response.json()
+        return response.json() if response else None
     
     def list_instances(self) -> List[Dict[str, Any]]:
         """List all Data Fusion instances in the project/location"""
@@ -169,16 +169,20 @@ class CloudDataFusionClient:
             f"List all Data Fusion instances in project '{self.config.project_id}' and location '{self.config.location}'",
             "Instance Level Operation"
         )
-        result = response.json()
-        return result.get('instances', [])
+        if response:
+            result = response.json()
+            return result.get('instances', [])
+        return []
     
-    def get_instance_api_endpoint(self, instance_name: str) -> str:
+    def get_instance_api_endpoint(self, instance_name: str) -> Optional[str]:
         """Get the CDAP API endpoint for an instance"""
         instance_details = self.get_instance(instance_name)
-        api_endpoint = instance_details.get('apiEndpoint')
-        if not api_endpoint:
-            raise ValueError(f"No API endpoint found for instance {instance_name}")
-        return api_endpoint
+        if instance_details:
+            api_endpoint = instance_details.get('apiEndpoint')
+            if not api_endpoint:
+                raise ValueError(f"No API endpoint found for instance {instance_name}")
+            return api_endpoint
+        return None
 
 
 class NamespaceSystemClient:
@@ -193,7 +197,7 @@ class NamespaceSystemClient:
             'Content-Type': 'application/json'
         })
     
-    def _make_request(self, method: str, endpoint: str, test_case: str, description: str, operation_type: str = "Namespace Level Operation", **kwargs) -> Tuple[requests.Response, TestResult]:
+    def _make_request(self, method: str, endpoint: str, test_case: str, description: str, operation_type: str = "Namespace Level Operation", **kwargs) -> Tuple[Optional[requests.Response], TestResult]:
         """Make HTTP request with test case tracking - prevents duplicates"""
         # Check for duplicate test cases
         existing_test = next((r for r in self.config.test_results if r.test_case == test_case), None)
@@ -264,7 +268,7 @@ class NamespaceSystemClient:
     # NAMESPACE OPERATIONS (Complete CRUD with Google naming standards)
     # =====================================
     
-    def list_namespaces(self) -> List[Dict[str, Any]]:
+    def list_namespaces(self) -> Optional[List[Dict[str, Any]]]:
         """List all namespaces"""
         endpoint = "/v3/namespaces"
         
@@ -275,9 +279,9 @@ class NamespaceSystemClient:
             "List all available namespaces",
             "Namespace Level Operation"
         )
-        return response.json()
+        return response.json() if response else None
     
-    def create_namespace(self, namespace_id: str, namespace_config: Dict[str, Any] = None) -> Dict[str, Any]:
+    def create_namespace(self, namespace_id: str, namespace_config: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
         """Create a namespace using PUT with Google naming standards"""
         endpoint = f"/v3/namespaces/{namespace_id}"
         payload = namespace_config or {}
@@ -290,9 +294,11 @@ class NamespaceSystemClient:
             "Namespace Level Operation",
             json=payload
         )
-        return response.json() if response.text else {"status": "created"}
+        if response:
+            return response.json() if response.text else {"status": "created"}
+        return None
     
-    def get_namespace(self, namespace_id: str) -> Dict[str, Any]:
+    def get_namespace(self, namespace_id: str) -> Optional[Dict[str, Any]]:
         """Get namespace details"""
         endpoint = f"/v3/namespaces/{namespace_id}"
         
@@ -303,9 +309,9 @@ class NamespaceSystemClient:
             f"Get namespace '{namespace_id}' details",
             "Namespace Level Operation"
         )
-        return response.json()
+        return response.json() if response else None
     
-    def delete_namespace(self, namespace_id: str) -> Dict[str, Any]:
+    def delete_namespace(self, namespace_id: str) -> Optional[Dict[str, Any]]:
         """Delete a namespace"""
         endpoint = f"/v3/namespaces/{namespace_id}"
         
@@ -316,9 +322,11 @@ class NamespaceSystemClient:
             f"Delete namespace '{namespace_id}' and all contents",
             "Namespace Level Operation"
         )
-        return response.json() if response.text else {"status": "deleted"}
+        if response:
+            return response.json() if response.text else {"status": "deleted"}
+        return None
     
-    def update_namespace_preferences(self, namespace_id: str, preferences: Dict[str, Any]) -> Dict[str, Any]:
+    def update_namespace_preferences(self, namespace_id: str, preferences: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Update namespace preferences using PUT"""
         endpoint = f"/v3/namespaces/{namespace_id}/preferences"
         
@@ -330,9 +338,11 @@ class NamespaceSystemClient:
             "Namespace Level Operation",
             json=preferences
         )
-        return response.json() if response.text else {"status": "updated"}
+        if response:
+            return response.json() if response.text else {"status": "updated"}
+        return None
     
-    def get_namespace_preferences(self, namespace_id: str) -> Dict[str, Any]:
+    def get_namespace_preferences(self, namespace_id: str) -> Optional[Dict[str, Any]]:
         """Get namespace preferences"""
         endpoint = f"/v3/namespaces/{namespace_id}/preferences"
         
@@ -343,13 +353,13 @@ class NamespaceSystemClient:
             f"Get preferences for namespace '{namespace_id}'",
             "Namespace Level Operation"
         )
-        return response.json()
+        return response.json() if response else None
     
     # =====================================
     # SYSTEM ADMIN OPERATIONS (Complete CRUD with service status details)
     # =====================================
     
-    def get_system_services(self) -> Dict[str, Any]:
+    def get_system_services(self) -> Optional[Dict[str, Any]]:
         """Get system services status"""
         endpoint = "/v3/system/services"
         
@@ -360,9 +370,9 @@ class NamespaceSystemClient:
             "Get all system services status",
             "System Admin Level Operation"
         )
-        return response.json()
+        return response.json() if response else None
     
-    def get_system_service_status(self, service_name: str) -> Dict[str, Any]:
+    def get_system_service_status(self, service_name: str) -> Optional[Dict[str, Any]]:
         """Get specific system service status with detailed info"""
         endpoint = f"/v3/system/services/{service_name}/status"
         
@@ -374,15 +384,17 @@ class NamespaceSystemClient:
             "System Admin Level Operation"
         )
         
-        # Enhanced response with service name and status
-        service_status = response.json()
-        return {
-            "service_name": service_name,
-            "status_details": service_status,
-            "is_healthy": service_status.get("status", "").upper() == "OK" if service_status else False
-        }
+        if response:
+            # Enhanced response with service name and status
+            service_status = response.json()
+            return {
+                "service_name": service_name,
+                "status_details": service_status,
+                "is_healthy": service_status.get("status", "").upper() == "OK" if service_status else False
+            }
+        return None
     
-    def restart_system_service(self, service_name: str) -> Dict[str, Any]:
+    def restart_system_service(self, service_name: str) -> Optional[Dict[str, Any]]:
         """Restart a system service"""
         endpoint = f"/v3/system/services/{service_name}/restart"
         
@@ -394,9 +406,11 @@ class NamespaceSystemClient:
             "System Admin Level Execution",
             json={}
         )
-        return response.json() if response.text else {"status": "restarted", "service_name": service_name}
+        if response:
+            return response.json() if response.text else {"status": "restarted", "service_name": service_name}
+        return None
     
-    def get_system_configuration(self) -> Dict[str, Any]:
+    def get_system_configuration(self) -> Optional[Dict[str, Any]]:
         """Get system configuration"""
         endpoint = "/v3/system/config"
         
@@ -407,9 +421,9 @@ class NamespaceSystemClient:
             "Get system configuration settings",
             "System Admin Level Operation"
         )
-        return response.json()
+        return response.json() if response else None
     
-    def update_system_configuration(self, config_properties: Dict[str, Any]) -> Dict[str, Any]:
+    def update_system_configuration(self, config_properties: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Update system configuration using PUT"""
         endpoint = "/v3/system/config"
         
@@ -421,9 +435,11 @@ class NamespaceSystemClient:
             "System Admin Level Operation",
             json=config_properties
         )
-        return response.json() if response.text else {"status": "updated"}
+        if response:
+            return response.json() if response.text else {"status": "updated"}
+        return None
     
-    def get_system_artifacts(self) -> List[Dict[str, Any]]:
+    def get_system_artifacts(self) -> Optional[List[Dict[str, Any]]]:
         """Get system artifacts"""
         endpoint = "/v3/namespaces/system/artifacts"
         
@@ -434,9 +450,9 @@ class NamespaceSystemClient:
             "Get system-level artifacts",
             "System Admin Level Operation"
         )
-        return response.json()
+        return response.json() if response else None
     
-    def get_system_artifact_details(self, artifact_name: str, artifact_version: str) -> Dict[str, Any]:
+    def get_system_artifact_details(self, artifact_name: str, artifact_version: str) -> Optional[Dict[str, Any]]:
         """Get system artifact details"""
         endpoint = f"/v3/namespaces/system/artifacts/{artifact_name}/versions/{artifact_version}"
         
@@ -447,9 +463,9 @@ class NamespaceSystemClient:
             f"Get details for artifact '{artifact_name}' version '{artifact_version}'",
             "System Admin Level Operation"
         )
-        return response.json()
+        return response.json() if response else None
     
-    def get_system_metrics(self) -> Dict[str, Any]:
+    def get_system_metrics(self) -> Optional[Dict[str, Any]]:
         """Get system metrics"""
         endpoint = "/v3/metrics/system"
         
@@ -460,7 +476,7 @@ class NamespaceSystemClient:
             "Get system-wide performance metrics",
             "System Admin Level Operation"
         )
-        return response.json()
+        return response.json() if response else None
 
 
 class NamespaceSystemManager:
@@ -479,13 +495,16 @@ class NamespaceSystemManager:
         self.instance_client = CloudDataFusionClient(self.config)
         self.namespace_system_clients = {}  # Cache clients by instance
     
-    def get_namespace_system_client(self, instance_name: str) -> NamespaceSystemClient:
+    def get_namespace_system_client(self, instance_name: str) -> Optional[NamespaceSystemClient]:
         """Get or create namespace/system client for an instance"""
         if instance_name not in self.namespace_system_clients:
             api_endpoint = self.instance_client.get_instance_api_endpoint(instance_name)
-            self.namespace_system_clients[instance_name] = NamespaceSystemClient(
-                api_endpoint, self.config.auth_token, self.config
-            )
+            if api_endpoint:
+                self.namespace_system_clients[instance_name] = NamespaceSystemClient(
+                    api_endpoint, self.config.auth_token, self.config
+                )
+            else:
+                return None
         return self.namespace_system_clients[instance_name]
     
     def list_instances(self) -> List[Dict[str, Any]]:
@@ -497,9 +516,11 @@ class NamespaceSystemManager:
     # =====================================
     
     def create_namespace_with_preferences(self, instance_name: str, namespace_id: str, 
-                                        preferences: Dict[str, Any] = None) -> Dict[str, Any]:
+                                        preferences: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
         """Create a namespace with custom preferences"""
         client = self.get_namespace_system_client(instance_name)
+        if not client:
+            return None
         
         # Create the namespace
         namespace_config = {
@@ -508,19 +529,23 @@ class NamespaceSystemManager:
         result = client.create_namespace(namespace_id, namespace_config)
         
         # Set preferences if provided
-        if preferences:
+        if result and preferences:
             client.update_namespace_preferences(namespace_id, preferences)
         
         return result
     
-    def delete_namespace_completely(self, instance_name: str, namespace_id: str) -> Dict[str, Any]:
+    def delete_namespace_completely(self, instance_name: str, namespace_id: str) -> Optional[Dict[str, Any]]:
         """Delete a namespace completely"""
         client = self.get_namespace_system_client(instance_name)
+        if not client:
+            return None
         return client.delete_namespace(namespace_id)
     
     def validate_namespace_health(self, instance_name: str, namespace_id: str) -> Dict[str, Any]:
         """Basic validation of namespace health"""
         client = self.get_namespace_system_client(instance_name)
+        if not client:
+            return {"status": "ERROR", "error": "Could not get client"}
         
         health_status = {
             "namespace_id": namespace_id,
@@ -532,15 +557,18 @@ class NamespaceSystemManager:
         try:
             # Check if namespace exists
             namespace_info = client.get_namespace(namespace_id)
-            health_status["exists"] = True
-            health_status["namespace_info"] = namespace_info
+            if namespace_info:
+                health_status["exists"] = True
+                health_status["namespace_info"] = namespace_info
             
             # Check if preferences are accessible
             preferences = client.get_namespace_preferences(namespace_id)
-            health_status["preferences_accessible"] = True
-            health_status["preferences_count"] = len(preferences) if isinstance(preferences, dict) else 0
+            if preferences is not None:
+                health_status["preferences_accessible"] = True
+                health_status["preferences_count"] = len(preferences) if isinstance(preferences, dict) else 0
             
-            health_status["status"] = "HEALTHY"
+            if health_status["exists"] and health_status["preferences_accessible"]:
+                health_status["status"] = "HEALTHY"
             
         except Exception as e:
             health_status["error"] = str(e)
@@ -550,6 +578,8 @@ class NamespaceSystemManager:
     def get_system_health_with_services(self, instance_name: str) -> Dict[str, Any]:
         """Get comprehensive system health with detailed service status"""
         client = self.get_namespace_system_client(instance_name)
+        if not client:
+            return {"status": "ERROR", "error": "Could not get client"}
         
         health_info = {
             "instance": instance_name,
@@ -562,22 +592,26 @@ class NamespaceSystemManager:
         try:
             # Get system services
             services = client.get_system_services()
-            health_info["components"]["services"] = {
-                "status": "HEALTHY" if services else "UNHEALTHY",
-                "accessible": True,
-                "total_services": len(services) if isinstance(services, list) else 0
-            }
+            if services:
+                health_info["components"]["services"] = {
+                    "status": "HEALTHY",
+                    "accessible": True,
+                    "total_services": len(services) if isinstance(services, list) else 0
+                }
+            else:
+                health_info["components"]["services"] = {"status": "UNHEALTHY", "accessible": False}
             
             # Get detailed status for key services
             key_services = ["appfabric", "dataset.service", "metadata.service"]
             for service_name in key_services:
                 try:
                     service_status = client.get_system_service_status(service_name)
-                    health_info["service_details"][service_name] = {
-                        "status": "HEALTHY" if service_status.get("is_healthy", False) else "UNHEALTHY",
-                        "service_name": service_status.get("service_name", service_name),
-                        "details": service_status.get("status_details", {})
-                    }
+                    if service_status:
+                        health_info["service_details"][service_name] = {
+                            "status": "HEALTHY" if service_status.get("is_healthy", False) else "UNHEALTHY",
+                            "service_name": service_status.get("service_name", service_name),
+                            "details": service_status.get("status_details", {})
+                        }
                 except Exception as e:
                     health_info["service_details"][service_name] = {
                         "status": "ERROR",
@@ -593,11 +627,14 @@ class NamespaceSystemManager:
         try:
             # Get system configuration
             config = client.get_system_configuration()
-            health_info["components"]["configuration"] = {
-                "status": "HEALTHY" if config else "UNHEALTHY",
-                "accessible": True,
-                "config_keys": len(config) if isinstance(config, dict) else 0
-            }
+            if config:
+                health_info["components"]["configuration"] = {
+                    "status": "HEALTHY",
+                    "accessible": True,
+                    "config_keys": len(config) if isinstance(config, dict) else 0
+                }
+            else:
+                health_info["components"]["configuration"] = {"status": "UNHEALTHY", "accessible": False}
         except Exception as e:
             health_info["components"]["configuration"] = {"status": "ERROR", "error": str(e)}
             health_info["overall_status"] = "UNHEALTHY"
@@ -605,11 +642,14 @@ class NamespaceSystemManager:
         try:
             # Get system artifacts
             artifacts = client.get_system_artifacts()
-            health_info["components"]["artifacts"] = {
-                "status": "HEALTHY" if artifacts else "UNHEALTHY",
-                "accessible": True,
-                "artifact_count": len(artifacts) if isinstance(artifacts, list) else 0
-            }
+            if artifacts:
+                health_info["components"]["artifacts"] = {
+                    "status": "HEALTHY",
+                    "accessible": True,
+                    "artifact_count": len(artifacts) if isinstance(artifacts, list) else 0
+                }
+            else:
+                health_info["components"]["artifacts"] = {"status": "UNHEALTHY", "accessible": False}
         except Exception as e:
             health_info["components"]["artifacts"] = {"status": "ERROR", "error": str(e)}
             health_info["overall_status"] = "UNHEALTHY"
@@ -619,6 +659,8 @@ class NamespaceSystemManager:
     def validate_system_services_detailed(self, instance_name: str) -> Dict[str, Any]:
         """Detailed validation of system services with individual status"""
         client = self.get_namespace_system_client(instance_name)
+        if not client:
+            return {"status": "ERROR", "error": "Could not get client"}
         
         validation_result = {
             "timestamp": datetime.now().isoformat(),
@@ -638,20 +680,21 @@ class NamespaceSystemManager:
             for service_name in key_services:
                 try:
                     service_status = client.get_system_service_status(service_name)
-                    is_healthy = service_status.get("is_healthy", False)
-                    
-                    validation_result["services"][service_name] = {
-                        "service_name": service_status.get("service_name", service_name),
-                        "status": "HEALTHY" if is_healthy else "UNHEALTHY",
-                        "details": service_status.get("status_details", {}),
-                        "is_running": is_healthy
-                    }
-                    
-                    if is_healthy:
-                        validation_result["healthy_services"] += 1
-                    else:
-                        validation_result["unhealthy_services"] += 1
-                        validation_result["overall_status"] = "UNHEALTHY"
+                    if service_status:
+                        is_healthy = service_status.get("is_healthy", False)
+                        
+                        validation_result["services"][service_name] = {
+                            "service_name": service_status.get("service_name", service_name),
+                            "status": "HEALTHY" if is_healthy else "UNHEALTHY",
+                            "details": service_status.get("status_details", {}),
+                            "is_running": is_healthy
+                        }
+                        
+                        if is_healthy:
+                            validation_result["healthy_services"] += 1
+                        else:
+                            validation_result["unhealthy_services"] += 1
+                            validation_result["overall_status"] = "UNHEALTHY"
                         
                 except Exception as e:
                     validation_result["services"][service_name] = {
@@ -672,6 +715,9 @@ class NamespaceSystemManager:
     def restart_system_services(self, instance_name: str, service_names: List[str]) -> Dict[str, Any]:
         """Restart multiple system services"""
         client = self.get_namespace_system_client(instance_name)
+        if not client:
+            return {"status": "ERROR", "error": "Could not get client"}
+        
         results = {
             "timestamp": datetime.now().isoformat(),
             "services": {},
@@ -683,12 +729,21 @@ class NamespaceSystemManager:
         for service_name in service_names:
             try:
                 result = client.restart_system_service(service_name)
-                results["services"][service_name] = {
-                    "service_name": service_name,
-                    "status": "SUCCESS",
-                    "restart_result": result
-                }
-                results["successful_restarts"] += 1
+                if result:
+                    results["services"][service_name] = {
+                        "service_name": service_name,
+                        "status": "SUCCESS",
+                        "restart_result": result
+                    }
+                    results["successful_restarts"] += 1
+                else:
+                    results["services"][service_name] = {
+                        "service_name": service_name,
+                        "status": "FAILED",
+                        "error": "No response"
+                    }
+                    results["failed_restarts"] += 1
+                    results["overall_status"] = "PARTIAL_FAILURE"
             except Exception as e:
                 results["services"][service_name] = {
                     "service_name": service_name,
@@ -739,18 +794,24 @@ class TestRunner:
         """Test complete namespace operations with CRUD"""
         try:
             client = self.manager.get_namespace_system_client(instance_name)
+            if not client:
+                print("✗ Could not get namespace/system client")
+                return
             
             # Test listing namespaces
             namespaces = client.list_namespaces()
-            print(f"✓ List namespaces test passed (found {len(namespaces)} namespaces)")
+            if namespaces is not None:
+                print(f"✓ List namespaces test passed (found {len(namespaces) if isinstance(namespaces, list) else 0} namespaces)")
             
             # Test getting default namespace details
             default_namespace = client.get_namespace("default")
-            print(f"✓ Get default namespace test passed")
+            if default_namespace:
+                print(f"✓ Get default namespace test passed")
             
             # Test namespace preferences
             preferences = client.get_namespace_preferences("default")
-            print(f"✓ Get namespace preferences test passed")
+            if preferences is not None:
+                print(f"✓ Get namespace preferences test passed")
             
             # Test creating a test namespace
             try:
@@ -760,8 +821,9 @@ class TestRunner:
                         "scheduler.max.thread.pool.size": "10"
                     }
                 }
-                client.create_namespace(self.test_namespace_name, namespace_config)
-                print(f"✓ Create test namespace '{self.test_namespace_name}' test passed")
+                result = client.create_namespace(self.test_namespace_name, namespace_config)
+                if result:
+                    print(f"✓ Create test namespace '{self.test_namespace_name}' test passed")
                 
                 # Test updating namespace preferences
                 test_preferences = {
@@ -769,20 +831,23 @@ class TestRunner:
                     "test.property": "test-value",
                     "environment": "testing"
                 }
-                client.update_namespace_preferences(self.test_namespace_name, test_preferences)
-                print(f"✓ Update namespace preferences test passed")
+                result = client.update_namespace_preferences(self.test_namespace_name, test_preferences)
+                if result:
+                    print(f"✓ Update namespace preferences test passed")
                 
                 # Test getting updated preferences
                 updated_prefs = client.get_namespace_preferences(self.test_namespace_name)
-                print(f"✓ Get updated namespace preferences test passed")
+                if updated_prefs is not None:
+                    print(f"✓ Get updated namespace preferences test passed")
                 
                 # Test namespace health validation
                 health = self.manager.validate_namespace_health(instance_name, self.test_namespace_name)
                 print(f"✓ Namespace health validation test passed (status: {health.get('status')})")
                 
                 # Clean up - delete test namespace
-                client.delete_namespace(self.test_namespace_name)
-                print(f"✓ Delete test namespace test passed")
+                result = client.delete_namespace(self.test_namespace_name)
+                if result:
+                    print(f"✓ Delete test namespace test passed")
                 
             except Exception as e:
                 print(f"✗ Namespace CRUD operations test failed: {e}")
@@ -794,23 +859,30 @@ class TestRunner:
         """Test system admin operations with detailed service status"""
         try:
             client = self.manager.get_namespace_system_client(instance_name)
+            if not client:
+                print("✗ Could not get namespace/system client")
+                return
             
             # Test system services
             services = client.get_system_services()
-            print(f"✓ Get system services test passed")
+            if services is not None:
+                print(f"✓ Get system services test passed")
             
             # Test system configuration
             config = client.get_system_configuration()
-            print(f"✓ Get system configuration test passed")
+            if config is not None:
+                print(f"✓ Get system configuration test passed")
             
             # Test system artifacts
             artifacts = client.get_system_artifacts()
-            print(f"✓ Get system artifacts test passed")
+            if artifacts is not None:
+                print(f"✓ Get system artifacts test passed")
             
             # Test system metrics
             try:
                 metrics = client.get_system_metrics()
-                print(f"✓ Get system metrics test passed")
+                if metrics is not None:
+                    print(f"✓ Get system metrics test passed")
             except Exception as e:
                 print(f"✗ Get system metrics test failed: {e}")
             
@@ -819,8 +891,9 @@ class TestRunner:
             for service_name in key_services:
                 try:
                     service_status = client.get_system_service_status(service_name)
-                    service_health = "HEALTHY" if service_status.get("is_healthy", False) else "UNHEALTHY"
-                    print(f"✓ Get {service_name} service status test passed (Status: {service_health})")
+                    if service_status:
+                        service_health = "HEALTHY" if service_status.get("is_healthy", False) else "UNHEALTHY"
+                        print(f"✓ Get {service_name} service status test passed (Status: {service_health})")
                 except Exception as e:
                     print(f"✗ Get {service_name} service status test failed: {e}")
             
@@ -829,8 +902,9 @@ class TestRunner:
                 test_config = {
                     "test.config.property": "test-value"
                 }
-                client.update_system_configuration(test_config)
-                print(f"✓ Update system configuration test passed")
+                result = client.update_system_configuration(test_config)
+                if result:
+                    print(f"✓ Update system configuration test passed")
             except Exception as e:
                 print(f"✗ Update system configuration test failed: {e}")
             
@@ -860,24 +934,6 @@ class TestRunner:
             
             print(f"✓ System services validation test passed (Status: {validation_status})")
             print(f"  - Healthy Services: {healthy_count}, Unhealthy Services: {unhealthy_count}")
-            
-            # Test namespace health for default namespace
-            namespace_health = self.manager.validate_namespace_health(instance_name, "default")
-            print(f"✓ Default namespace health validation test passed (status: {namespace_health.get('status')})")
-            
-        except Exception as e:
-            print(f"✗ Health validation test failed: {e}")
-    
-    def _test_health_validation(self, instance_name: str):
-        """Test health validation operations"""
-        try:
-            # Test system health validation
-            system_health = self.manager.get_system_health(instance_name)
-            print(f"✓ System health validation test passed (status: {system_health.get('overall_status')})")
-            
-            # Test service validation
-            service_validation = self.manager.validate_system_services(instance_name)
-            print(f"✓ System services validation test passed (status: {service_validation.get('overall_status')})")
             
             # Test namespace health for default namespace
             namespace_health = self.manager.validate_namespace_health(instance_name, "default")
@@ -1016,13 +1072,20 @@ def main():
             
             # Show system health summary
             try:
-                health = manager.get_system_health(instance_name)
+                health = manager.get_system_health_with_services(instance_name)
                 print(f"   System Health: {health.get('overall_status')}")
                 
                 components = health.get('components', {})
                 for component, info in components.items():
                     status = info.get('status', 'UNKNOWN')
                     print(f"   - {component.title()}: {status}")
+                
+                service_details = health.get('service_details', {})
+                if service_details:
+                    print(f"   Service Details:")
+                    for service, details in service_details.items():
+                        status = details.get('status', 'UNKNOWN')
+                        print(f"   - {service}: {status}")
                     
             except Exception as e:
                 print(f"   Could not retrieve system health: {e}")
