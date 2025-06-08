@@ -80,7 +80,13 @@ class CloudDataFusionClient:
         })
     
     def _make_request(self, method: str, url: str, test_case: str, description: str, operation_type: str = "Instance Level Operation", **kwargs) -> Tuple[requests.Response, TestResult]:
-        """Make HTTP request with test case tracking"""
+        """Make HTTP request with test case tracking - prevents duplicates"""
+        # Check for duplicate test cases
+        existing_test = next((r for r in self.config.test_results if r.test_case == test_case), None)
+        if existing_test:
+            print(f"Skipping duplicate test case: {test_case}")
+            return None, existing_test
+        
         start_time = time.time()
         timestamp = datetime.now().isoformat()
         
@@ -256,7 +262,13 @@ class CDAPClient:
         })
     
     def _make_request(self, method: str, endpoint: str, test_case: str, description: str, operation_type: str = "Pipeline Level Operation", **kwargs) -> Tuple[requests.Response, TestResult]:
-        """Make HTTP request with test case tracking"""
+        """Make HTTP request with test case tracking - prevents duplicates"""
+        # Check for duplicate test cases
+        existing_test = next((r for r in self.config.test_results if r.test_case == test_case), None)
+        if existing_test:
+            print(f"Skipping duplicate test case: {test_case}")
+            return None, existing_test
+        
         url = f"{self.cdap_endpoint}{endpoint}"
         start_time = time.time()
         timestamp = datetime.now().isoformat()
