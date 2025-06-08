@@ -1,26 +1,213 @@
-# Google Cloud Data Fusion CLI Test Cases Documentation
+# Google Cloud Data Fusion CLI Test Suite
 
 ## Overview
-This document provides detailed information about all test cases implemented in the Cloud Data Fusion CLI test script. Each test case validates specific functionality of the `gcloud beta data-fusion` commands.
 
-**IMPORTANT**: This test suite is designed for users with **custom role permissions** that include only read operations. All write/update operations are expected to fail due to insufficient permissions.
+This comprehensive test suite validates all available `gcloud beta data-fusion` CLI commands. It's specifically designed for users with **custom IAM roles containing only read permissions**, making it ideal for:
 
-## Test Environment Requirements
-- Google Cloud SDK installed and configured
-- Valid GCP Project with Data Fusion API enabled
-- Existing Data Fusion instance
-- User with a custom IAM role containing only read permissions for Data Fusion
+- Validating Data Fusion instance accessibility
+- Testing custom IAM role configurations
+- Monitoring instance health and status
+- Compliance and security auditing
+- Automated testing in CI/CD pipelines
 
-## Permission Model
-The test script assumes the executing user has a **custom role with read-only permissions**, which allows:
-- ✅ Read operations (list, describe, get)
-- ❌ Write operations (create, update, delete, restart)
-- ❌ IAM modifications (add/remove bindings, set policies)
+## Key Features
 
-### Example Custom Role Definition
+- **Cross-Platform Compatible**: Works on Linux, macOS, and BSD systems
+- **Custom Role Support**: Designed for read-only custom IAM roles
+- **Comprehensive Testing**: Tests 30+ different CLI commands
+- **Multiple Output Formats**: CSV, HTML, detailed logs, and summary reports
+- **Expected Failure Handling**: Properly handles permission-denied scenarios
+- **Color-Coded Console Output**: Visual feedback during execution
+- **Detailed Timing**: Tracks execution time for each command
+- **Performance Optimized**: Uses `--async` flag for faster test execution
+
+## Prerequisites
+
+1. **Google Cloud SDK**: Installed and configured
+   ```bash
+   # Install Google Cloud SDK
+   curl https://sdk.cloud.google.com | bash
+   ```
+
+2. **Authentication**: Logged into gcloud
+   ```bash
+   gcloud auth login
+   ```
+
+3. **Data Fusion API**: Enabled in your project
+   ```bash
+   gcloud services enable datafusion.googleapis.com
+   ```
+
+4. **Custom IAM Role**: User must have a custom role with read-only permissions
+   ```bash
+   # Example custom role creation
+   gcloud iam roles create dataFusionReadOnly \
+       --project=PROJECT_ID \
+       --title="Data Fusion Read Only" \
+       --permissions=datafusion.instances.get,datafusion.instances.list,datafusion.operations.get,datafusion.operations.list,datafusion.instances.getIamPolicy
+   ```
+
+## Installation
+
+1. Download the test script:
+   ```bash
+   wget https://your-repo/datafusion-cli-test.sh
+   # or
+   curl -O https://your-repo/datafusion-cli-test.sh
+   ```
+
+2. Make it executable:
+   ```bash
+   chmod +x datafusion-cli-test.sh
+   ```
+
+## Usage
+
+### Basic Usage
+```bash
+./datafusion-cli-test.sh -p PROJECT_ID -l LOCATION -i INSTANCE_NAME
+```
+
+### With Custom Namespace
+```bash
+./datafusion-cli-test.sh -p PROJECT_ID -l LOCATION -i INSTANCE_NAME -n NAMESPACE
+```
+
+### Parameters
+- `-p PROJECT_ID`: Your GCP Project ID (required)
+- `-l LOCATION`: Region/Location (required, e.g., us-central1, europe-west1)
+- `-i INSTANCE_NAME`: Data Fusion instance name (required)
+- `-n NAMESPACE`: Namespace (optional, default: "default")
+- `-h`: Display help message
+
+### Examples
+```bash
+# Test instance in us-central1
+./datafusion-cli-test.sh -p my-project-123 -l us-central1 -i production-etl
+
+# Test with custom namespace
+./datafusion-cli-test.sh -p my-project-123 -l europe-west1 -i dev-instance -n development
+```
+
+## Understanding the Test Framework
+
+### The "true" Parameter Explained
+
+You might notice some test commands have `"true"` at the end:
+
+```bash
+execute_test "TC009" "Update instance options" "gcloud beta data-fusion instances update..." "true"
+```
+
+**Important**: The `"true"` is **NOT** part of the gcloud command! It's a parameter for our test framework.
+
+#### How `execute_test` Works:
+
+```bash
+execute_test "TEST_ID" "TEST_NAME" "COMMAND" "EXPECTED_TO_FAIL"
+#             $1        $2          $3         $4
+```
+
+- **Parameter 1**: Test case ID
+- **Parameter 2**: Human-readable test name
+- **Parameter 3**: The actual gcloud command
+- **Parameter 4**: `"true"` if we expect the command to fail, omitted otherwise
+
+#### Why This Matters:
+
+With read-only permissions:
+- ✅ **Read operations** should succeed → No `"true"` parameter
+- ❌ **Write operations** should fail → Include `"true"` parameter
+
+This allows us to verify that permissions are working correctly!
+
+### Test Result Statuses
+
+| Status | Description | Counts as Success? |
+|--------|-------------|-------------------|
+| PASS | Command succeeded as expected | ✅ Yes |
+| EXPECTED_FAIL | Command failed as expected (permissions working) | ✅ Yes |
+| FAIL | Command failed unexpectedly | ❌ No |
+| UNEXPECTED_PASS | Command succeeded but should have failed | ❌ No |
+
+## Test Cases Overview
+
+### Read Operations (Should PASS)
+- List all instances
+- Describe instance details
+- Get IAM policies
+- List operations
+- Retrieve instance properties (version, endpoints, state)
+
+### Write Operations (Should EXPECTED_FAIL)
+- Update instance configurations
+- Modify labels
+- Restart instances
+- Enable logging/monitoring
+- Modify IAM policies
+
+See the full test case documentation for detailed information about all 30 test cases.
+
+## Output Files
+
+The script generates multiple output files in a timestamped directory:
+
+```
+data_fusion_test_results_YYYYMMDD_HHMMSS/
+├── data_fusion_test_TIMESTAMP.log          # Detailed execution log
+├── data_fusion_test_results_TIMESTAMP.csv  # Machine-readable results
+├── test_report_TIMESTAMP.html              # Visual HTML report
+└── test_summary_TIMESTAMP.txt              # Executive summary
+```
+
+### CSV Format
+```csv
+Test Case ID,Test Case Name,Command,Status,Execution Time,Output,Error Message,Timestamp
+TC001,Check gcloud installation,gcloud version,PASS,1,Google Cloud SDK 450.0.0,,(timestamp)
+TC008,Update instance labels,gcloud beta data-fusion instances update...,EXPECTED_FAIL,2,,PERMISSION_DENIED,(timestamp)
+```
+
+### HTML Report
+- Color-coded results (Green=PASS, Yellow=EXPECTED_FAIL, Red=FAIL)
+- Sortable table with all test details
+- Summary statistics at the top
+
+## Success Criteria
+
+With custom read-only role permissions:
+- **Expected**: ~15 PASS (reads) + ~15 EXPECTED_FAIL (writes) = 100% success rate
+- **Success Rate Formula**: (PASS + EXPECTED_FAIL) / Total Tests × 100%
+
+## Troubleshooting
+
+### Common Issues
+
+1. **"date: illegal option -- d" Error**
+   - **Fixed in v1.3**: Script now uses cross-platform date calculations
+
+2. **All Commands Failing with Auth Errors**
+   - Run: `gcloud auth login`
+   - Verify: `gcloud config get-value account`
+
+3. **Permission Denied on Read Operations**
+   - Check role permissions: `gcloud iam roles describe dataFusionReadOnly --project=PROJECT_ID`
+   - Ensure role includes: `datafusion.instances.get`, `datafusion.instances.list`
+
+4. **Write Commands Unexpectedly Passing**
+   - User has more than read permissions
+   - Verify: `gcloud projects get-iam-policy PROJECT_ID --flatten="bindings[].members" --filter="bindings.members:user:YOUR_EMAIL"`
+
+5. **Instance Not Found**
+   - Verify instance exists: `gcloud beta data-fusion instances list --location=LOCATION`
+   - Check instance name spelling
+
+## Custom Role Configuration
+
+### Minimal Read-Only Role
 ```yaml
 title: "Data Fusion Read Only"
-description: "Custom role for read-only access to Data Fusion instances"
+description: "Custom role for read-only access to Data Fusion"
 stage: "GA"
 includedPermissions:
 - datafusion.instances.get
@@ -30,228 +217,132 @@ includedPermissions:
 - datafusion.instances.getIamPolicy
 ```
 
-## Test Cases Summary
-
-| Test ID | Test Case Name | Command Category | Description | Expected Result | Permission Required |
-|---------|----------------|------------------|-------------|-----------------|---------------------|
-| TC001 | Check gcloud installation | Environment | Verifies gcloud CLI is installed and accessible | PASS | None |
-| TC002 | Set project | Environment | Sets the GCP project context | PASS | None |
-| TC003 | Check Data Fusion API | API Status | Verifies Data Fusion API is enabled | PASS | Viewer |
-| TC004 | List instances | Instance Management | Lists all Data Fusion instances in location | PASS | Viewer |
-| TC005 | Describe instance | Instance Management | Gets detailed information about specific instance | PASS | Viewer |
-| TC006 | Get IAM policy | Security | Retrieves IAM policy for the instance | PASS | Viewer |
-| TC007 | List operations | Operations | Lists all operations in the location | PASS | Viewer |
-| TC008 | Update instance labels | Instance Management | Adds test label to instance | **EXPECTED_FAIL** | Editor/Admin |
-| TC009 | Update instance options | Instance Management | Updates instance configuration options | **EXPECTED_FAIL** | Editor/Admin |
-| TC010 | Restart instance | Instance Management | Initiates instance restart | **EXPECTED_FAIL** | Editor/Admin |
-| TC011 | Wait for restart | Operations | Skipped - restart won't happen | N/A | N/A |
-| TC012 | Enable Stackdriver logging | Monitoring | Enables Cloud Logging for instance | **EXPECTED_FAIL** | Editor/Admin |
-| TC013 | Enable Stackdriver monitoring | Monitoring | Enables Cloud Monitoring for instance | **EXPECTED_FAIL** | Editor/Admin |
-| TC014 | Update instance description | Instance Management | Updates instance description field | **EXPECTED_FAIL** | Editor/Admin |
-| TC015 | Add IAM policy binding | Security | Adds viewer role to test user | **EXPECTED_FAIL** | Admin |
-| TC016 | Remove IAM policy binding | Security | Removes viewer role from test user | **EXPECTED_FAIL** | Admin |
-| TC017 | Get API endpoint | Instance Info | Retrieves CDAP API endpoint URL | PASS | Viewer |
-| TC018 | Get service endpoint | Instance Info | Retrieves service endpoint URL | PASS | Viewer |
-| TC019 | Get instance state | Instance Info | Checks current instance state | PASS | Viewer |
-| TC020 | Get instance version | Instance Info | Gets current Data Fusion version | PASS | Viewer |
-| TC021 | List available versions | Instance Info | Lists available upgrade versions | PASS | Viewer |
-| TC022 | Get instance type | Instance Info | Gets instance type (BASIC/ENTERPRISE) | PASS | Viewer |
-| TC023 | Get private instance status | Instance Info | Checks if instance is private | PASS | Viewer |
-| TC024 | Get network config | Instance Info | Retrieves network configuration | PASS | Viewer |
-| TC025 | Update instance zone | Instance Management | Attempts to update instance zone | **EXPECTED_FAIL** | Editor/Admin |
-| TC026 | Clear instance labels | Instance Management | Removes all labels from instance | **EXPECTED_FAIL** | Editor/Admin |
-| TC027 | List operations with filter | Operations | Lists operations filtered by instance | PASS | Viewer |
-| TC028 | Describe latest operation | Operations | Gets details of most recent operation | EXPECTED_FAIL | Viewer |
-| TC029 | Set IAM policy from file | Security | Sets complete IAM policy from JSON | **EXPECTED_FAIL** | Admin |
-| TC030 | Get instance creation time | Instance Info | Retrieves instance creation timestamp | PASS | Viewer |
-
-## Command Categories by Permission Level
-
-### ✅ Custom Role Read Permissions (Expected to PASS)
-These commands only read information and don't modify any resources:
-
-1. **Instance Information**
-   - `gcloud beta data-fusion instances list`
-   - `gcloud beta data-fusion instances describe`
-
-2. **IAM Policy Reading**
-   - `gcloud beta data-fusion get-iam-policy`
-
-3. **Operations Listing**
-   - `gcloud beta data-fusion operations list`
-   - `gcloud beta data-fusion operations describe`
-
-### ❌ Write Permissions Required (Expected to FAIL)
-These commands modify resources and require write permissions not included in the custom read-only role:
-
-1. **Instance Management**
-   - `gcloud beta data-fusion instances create`
-   - `gcloud beta data-fusion instances update`
-   - `gcloud beta data-fusion instances delete`
-   - `gcloud beta data-fusion instances restart`
-
-2. **IAM Policy Modification**
-   - `gcloud beta data-fusion set-iam-policy`
-   - `gcloud beta data-fusion add-iam-policy-binding`
-   - `gcloud beta data-fusion remove-iam-policy-binding`
-
-## Common Parameters
-
-| Parameter | Description | Example |
-|-----------|-------------|---------|
-| --project | GCP Project ID | my-project-123 |
-| --location | Region/Location | us-central1 |
-| --format | Output format | json, yaml, value() |
-| --filter | Resource filter | name:my-instance |
-| --limit | Maximum results | 10 |
-| --async | Asynchronous execution | (flag only) |
-
-## Update Command Options
-
-### Labels
-- `--update-labels`: Add or update labels
-- `--remove-labels`: Remove specific labels
-- `--clear-labels`: Remove all labels
-
-### Instance Configuration
-- `--description`: Update instance description
-- `--enable_stackdriver_logging`: Enable Cloud Logging
-- `--enable_stackdriver_monitoring`: Enable Cloud Monitoring
-- `--options`: Update CDAP configuration options
-- `--version`: Upgrade instance version
-
-### Maintenance Window (if supported)
-- `--maintenance-window-start`: Set maintenance window start time
-- `--maintenance-window-end`: Set maintenance window end time
-- `--maintenance-window-recurrence`: Set maintenance recurrence
-- `--clear-maintenance-window`: Remove maintenance window
-
-## Expected Test Results for Custom Role Permissions
-
-### Success Criteria
-With custom read-only role permissions, the test is considered successful when:
-- All read-only commands (list, describe, get) execute successfully
-- All write/update commands fail with permission denied errors
-- No unexpected failures occur for read operations
-- Success rate = (PASS + EXPECTED_FAIL) / Total Tests
-
-### Expected Results Summary
-- **~15 tests should PASS** (all read operations)
-- **~15 tests should EXPECTED_FAIL** (all write operations)
-- **0 tests should FAIL** (unexpected failures indicate issues)
-
-### Permission Error Messages
-When running with custom read-only role permissions, expect error messages like:
-- `ERROR: (gcloud.beta.data-fusion.instances.update) PERMISSION_DENIED`
-- `User does not have permission to access instance`
-- `Request had insufficient authentication scopes`
-- `Missing required permissions: datafusion.instances.update`
-
-## Troubleshooting Guide for Custom Role Permissions
-
-### Common Issues and Solutions
-
-1. **Unexpected PASS for Update Commands**
-   - Issue: Update command succeeded when it should have failed
-   - Cause: Custom role includes write permissions
-   - Solution: Review custom role definition and remove write permissions
-
-2. **Read Commands Failing**
-   - Issue: List/Describe commands fail with permission errors
-   - Cause: Custom role missing required read permissions
-   - Solution: Add missing permissions like `datafusion.instances.get` to custom role
-
-3. **Authentication Errors on All Commands**
-   - Issue: All commands fail with authentication errors
-   - Cause: Not properly authenticated
-   - Solution: Run `gcloud auth login` and ensure correct account
-
-4. **Custom Role Not Found**
-   - Issue: IAM policy shows role doesn't exist
-   - Cause: Custom role not created or wrong project
-   - Solution: Create custom role with: `gcloud iam roles create`
-
-## IAM Roles and Custom Roles Reference
-
-### Predefined Roles
-| Role | Permissions | Test Impact |
-|------|-------------|-------------|
-| `roles/datafusion.viewer` | Read-only access to instances | Only read operations pass |
-| `roles/datafusion.editor` | Read/write access, no IAM | Most operations pass except IAM |
-| `roles/datafusion.admin` | Full access including IAM | All operations pass |
-
-### Custom Role Example for This Test
+### Create and Assign Role
 ```bash
-# Create a custom read-only role
+# Create the role
 gcloud iam roles create dataFusionReadOnly \
     --project=PROJECT_ID \
-    --title="Data Fusion Read Only" \
-    --description="Custom role for read-only Data Fusion access" \
-    --permissions=datafusion.instances.get,datafusion.instances.list,datafusion.operations.get,datafusion.operations.list,datafusion.instances.getIamPolicy
+    --file=role-definition.yaml
 
-# Grant the custom role to a user
+# Grant to user
 gcloud projects add-iam-policy-binding PROJECT_ID \
-    --member=user:EMAIL@example.com \
+    --member=user:test-user@example.com \
     --role=projects/PROJECT_ID/roles/dataFusionReadOnly
 ```
 
-## Best Practices for Custom Role Testing
+## Integration with CI/CD
 
-1. **Define Minimal Permissions**: Include only necessary read permissions in custom role
-2. **Document Custom Role**: Keep track of what permissions are included
-3. **Expected Failure Handling**: The script marks write operations as expected failures
-4. **Focus on Read Operations**: Custom read-only roles are meant for monitoring and inspection
-5. **Success Rate Calculation**: Includes both PASS and EXPECTED_FAIL in success rate
-6. **Use for Validation**: Perfect for validating read access and instance health
-7. **Regular Review**: Periodically review custom role permissions for security
+### GitHub Actions Example
+```yaml
+name: Data Fusion Access Test
+on:
+  schedule:
+    - cron: '0 8 * * *'  # Daily at 8 AM
 
-## Integration with CDAP REST API
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: google-github-actions/setup-gcloud@v0
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+      - run: |
+          ./datafusion-cli-test.sh \
+            -p ${{ secrets.PROJECT_ID }} \
+            -l us-central1 \
+            -i production-instance
+```
 
-After obtaining the API endpoint using CLI commands, you can interact with CDAP REST APIs:
+### Jenkins Pipeline Example
+```groovy
+pipeline {
+    agent any
+    stages {
+        stage('Test Data Fusion Access') {
+            steps {
+                sh '''
+                    ./datafusion-cli-test.sh \
+                        -p ${PROJECT_ID} \
+                        -l ${LOCATION} \
+                        -i ${INSTANCE_NAME}
+                '''
+            }
+        }
+    }
+    post {
+        always {
+            archiveArtifacts artifacts: 'data_fusion_test_results_*/*'
+            publishHTML([
+                reportDir: 'data_fusion_test_results_*',
+                reportFiles: 'test_report_*.html',
+                reportName: 'Data Fusion Test Report'
+            ])
+        }
+    }
+}
+```
 
+## Advanced Usage
+
+### Testing Multiple Instances
 ```bash
-# Get API endpoint
-export CDAP_ENDPOINT=$(gcloud beta data-fusion instances describe \
-  --location=LOCATION \
-  --format="value(apiEndpoint)" \
-  INSTANCE_NAME)
+#!/bin/bash
+INSTANCES=("prod-etl" "dev-etl" "staging-etl")
+LOCATION="us-central1"
+PROJECT="my-project-123"
 
-# Get auth token
-export AUTH_TOKEN=$(gcloud auth print-access-token)
-
-# Example: List namespaces
-curl -H "Authorization: Bearer ${AUTH_TOKEN}" \
-  "${CDAP_ENDPOINT}/v3/namespaces"
+for instance in "${INSTANCES[@]}"; do
+    echo "Testing instance: $instance"
+    ./datafusion-cli-test.sh -p $PROJECT -l $LOCATION -i $instance
+done
 ```
 
-## Reporting with Custom Role Permissions
-
-The test script generates multiple output formats optimized for custom read-only role scenarios:
-
-1. **CSV File**: Machine-readable test results with EXPECTED_FAIL status for write operations
-2. **HTML Report**: Human-readable test report with color coding:
-   - Green: Successful read operations (PASS)
-   - Yellow: Expected failures for write operations (EXPECTED_FAIL)
-   - Red: Unexpected failures (FAIL)
-3. **Log File**: Detailed execution logs showing permission denied errors
-4. **Summary File**: High-level summary showing success rate including expected failures
-
-### Sample Test Summary Output
-```
-Test Results:
--------------
-Total Tests Executed: 30
-Passed (Read Operations): 15
-Failed (Unexpected): 0
-Expected Failures (Write Operations): 15
-Success Rate: 100.0%
-
-Note: Success rate includes both PASS and EXPECTED_FAIL results.
-Write operations are expected to fail with custom role read-only permissions.
+### Custom Success Criteria
+Modify the script to check specific success rates:
+```bash
+if [ $(echo "$SUCCESS_RATE < 95" | bc) -eq 1 ]; then
+    echo "ERROR: Success rate below threshold"
+    exit 1
+fi
 ```
 
-## Version Compatibility
+## Version History
 
-- Requires gcloud SDK version 300.0.0 or later
-- Compatible with Cloud Data Fusion versions 6.x and above
-- Beta commands may change in future releases
+- **v1.4**: Added `--async` flag to all long-running operations for faster execution
+- **v1.3**: Cross-platform compatibility (Linux/macOS/BSD)
+- **v1.2**: Custom role permissions support
+- **v1.1**: Viewer permissions design
+- **v1.0**: Initial release
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test on multiple platforms
+5. Submit a pull request
+
+## License
+
+This script is provided under the Apache License 2.0.
+
+## Support
+
+For issues or questions:
+1. Check the troubleshooting section
+2. Review the test case documentation
+3. Submit an issue on GitHub
+4. Contact your Cloud Support team
+
+## Best Practices
+
+1. **Run Regularly**: Schedule weekly tests to ensure continuous access
+2. **Monitor Trends**: Track execution times for performance degradation
+3. **Review Failures**: Investigate any unexpected failures immediately
+4. **Update Permissions**: Keep custom roles aligned with your needs
+5. **Archive Results**: Keep test results for compliance auditing
+
+---
+
+**Note**: This test suite is designed for validation and monitoring purposes. It does not modify any Data Fusion resources when run with appropriate read-only permissions.
