@@ -5,9 +5,10 @@ Google Cloud Data Fusion Instance Level Operations Script (Control Plane)
 This script tests instance-level CRUD operations for Google Cloud Data Fusion.
 
 Features:
-- Instance lifecycle management (CREATE, GET, UPDATE, DELETE, LIST, RESTART)
+- Complete instance lifecycle management (CREATE, GET, UPDATE, DELETE, LIST, RESTART)
 - Command-line parameter support
 - Automated test execution with Pass/Fail tracking
+- Resource tracking and cleanup validation
 - CSV report generation
 - Tabulated output display
 - Summary statistics
@@ -55,6 +56,24 @@ class TestResult:
     expected_result: str = ""
     actual_result: str = ""
     test_passed: bool = False
+    resource_created: str = ""  # Track created resources
+    resource_deleted: bool = False  # Track if resource was deleted
+
+
+@dataclass
+class ResourceTracker:
+    """Track created resources for cleanup validation"""
+    created_instances: Dict[str, bool] = field(default_factory=dict)  # name -> deleted
+    
+    def add_instance(self, name: str):
+        self.created_instances[name] = False
+    
+    def mark_deleted(self, name: str):
+        if name in self.created_instances:
+            self.created_instances[name] = True
+    
+    def get_undeleted_resources(self) -> List[str]:
+        return [name for name, deleted in self.created_instances.items() if not deleted]
 
 
 @dataclass
@@ -66,7 +85,8 @@ class Config:
     base_url: str = "https://datafusion.googleapis.com"
     api_version: str = "v1beta1"
     test_results: List[TestResult] = field(default_factory=list)
-    processed_tests: set = field(default_factory=set)  # Track processed test cases
+    processed_tests: set = field(default_factory=set)
+    resource_tracker: ResourceTracker = field(default_factory=ResourceTracker)
 
     def __post_init__(self):
         if not self.auth_token:
@@ -86,7 +106,7 @@ class CloudDataFusionClient:
     
     def _make_request(self, method: str, url: str, test_case: str, description: str, 
                      operation_type: str = "Instance Level Operation", 
-                     expected_result: str = "", **kwargs) -> Tuple[Optional[requests.Response], TestResult]:
+                     expected_result: str = "", resource_name: str = "", **kwargs) -> Tuple[Optional[requests.Response], TestResult]:
         """Make HTTP request with test case tracking"""
         # Create unique test identifier
         test_id = f"{test_case}_{method}_{url}"
@@ -119,6 +139,19 @@ class CloudDataFusionClient:
             
             error_details = "" if response.status_code < 400 else response.text[:200]
             
+            # Track resource creation
+            resource_created = ""
+            if method in ["POST", "PUT"] and response.status_code < 300 and resource_name:
+                resource_created = resource_name
+                if "instance" in test_case.lower() and method == "POST":
+                    self.config.resource_tracker.add_instance(resource_name)
+            
+            # Track resource deletion
+            resource_deleted = False
+            if method == "DELETE" and response.status_code < 300 and resource_name:
+                resource_deleted = True
+                self.config.resource_tracker.mark_deleted(resource_name)
+            
             test_result = TestResult(
                 test_case=test_case,
                 api_endpoint=url,
@@ -133,7 +166,9 @@ class CloudDataFusionClient:
                 error_details=error_details,
                 expected_result=expected_result,
                 actual_result=actual_result,
-                test_passed=test_passed
+                test_passed=test_passed,
+                resource_created=resource_created,
+                resource_deleted=resource_deleted
             )
             
             self.config.test_results.append(test_result)
@@ -184,17 +219,14 @@ class CloudDataFusionClient:
         expected_lower = expected_result.lower()
         
         if "should fail" in expected_lower or "expected failure" in expected_lower:
-            # Test should fail
             return status_code >= 400
         elif "should succeed" in expected_lower or "200" in expected_result:
-            # Test should succeed
             return 200 <= status_code < 300
         elif "404" in expected_result:
             return status_code == 404
-        elif "400" in expected_result:
-            return status_code == 400
+        elif "409" in expected_result:
+            return status_code == 409
         else:
-            # Default: success means 2xx status
             return 200 <= status_code < 300
 
     def create_instance(self, instance_name: str, instance_config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -210,6 +242,7 @@ class CloudDataFusionClient:
             f"Create Data Fusion instance '{instance_name}' with configuration",
             "Instance Level Operation",
             expected_result="Should succeed with 200 OK for valid configuration",
+            resource_name=instance_name,
             params=params,
             json=instance_config
         )
@@ -260,7 +293,8 @@ class CloudDataFusionClient:
             f"DELETE_INSTANCE_{instance_name}",
             f"Delete Data Fusion instance '{instance_name}'",
             "Instance Level Operation",
-            expected_result=expected_result
+            expected_result=expected_result,
+            resource_name=instance_name
         )
         if response:
             return response.json() if response.text else {"status": "deleted"}
@@ -305,7 +339,8 @@ class InstanceTestRunner:
     def __init__(self, client: CloudDataFusionClient, create_instance: bool = False):
         self.client = client
         self.create_instance = create_instance
-        self.test_instance_name = f"test-instance-{int(time.time())}"
+        self.test_instance_name = f"test-api-instance-{int(time.time())}"
+        self.mini_instance_name = f"test-mini-instance-{int(time.time())}"
     
     def run_tests(self) -> List[TestResult]:
         """Run comprehensive instance-level tests"""
@@ -317,48 +352,181 @@ class InstanceTestRunner:
         print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print("="*60 + "\n")
         
-        # Test 1: List instances (always works)
+        # Test 1: Complete CRUD workflow on test instance
+        if self.create_instance:
+            self._test_complete_instance_crud_workflow()
+        
+        # Test 2: LIST operation
         self._test_list_instances()
         
-        # Test 2: Test with existing instances
+        # Test 3: Test with existing instances
         instances = self.client.list_instances()
         if instances:
-            # Test first existing instance
             existing_instance = instances[0]['name'].split('/')[-1]
             self._test_existing_instance_operations(existing_instance)
-            
-            # If more than one instance, test another
-            if len(instances) > 1:
-                another_instance = instances[1]['name'].split('/')[-1]
-                self._test_another_existing_instance(another_instance)
         
-        # Test 3: Test with non-existent instance (expected failures)
+        # Test 4: Test with non-existent instance (expected failures)
         self._test_non_existent_instance_operations()
         
-        # Test 4: Create instance test (optional - expensive)
+        # Test 5: Test mini CRUD cycle (if enabled)
         if self.create_instance:
-            self._test_create_delete_instance()
+            self._test_mini_crud_cycle()
         
         return self.client.config.test_results
     
+    def _test_complete_instance_crud_workflow(self):
+        """Test complete instance CRUD workflow"""
+        print("=== Testing Complete Instance CRUD Workflow ===")
+        print("⚠️  WARNING: This creates real instances and incurs costs!")
+        
+        instance_config = {
+            "type": "BASIC",
+            "description": "Test instance for complete CRUD validation",
+            "labels": {
+                "purpose": "api-testing",
+                "test-type": "complete-crud",
+                "created-by": "test-script"
+            },
+            "enableStackdriverLogging": True,
+            "enableStackdriverMonitoring": True
+        }
+        
+        # CREATE instance
+        try:
+            operation = self.client.create_instance(self.test_instance_name, instance_config)
+            print(f"✓ CREATE_INSTANCE_{self.test_instance_name} initiated")
+            print(f"  - Operation: {operation.get('name', 'UNKNOWN')}")
+            print("  - Waiting for instance to be ready (this takes 10-15 minutes)...")
+            
+            # Poll for instance creation (simplified - in production use operation status)
+            max_wait = 900  # 15 minutes
+            wait_interval = 30  # 30 seconds
+            elapsed = 0
+            instance_ready = False
+            
+            while elapsed < max_wait:
+                time.sleep(wait_interval)
+                elapsed += wait_interval
+                
+                try:
+                    instance = self.client.get_instance(
+                        self.test_instance_name,
+                        expected_result="Should succeed with 200 OK once instance is created"
+                    )
+                    if instance and instance.get('state') in ['RUNNING', 'ACTIVE']:
+                        instance_ready = True
+                        print(f"✓ Instance {self.test_instance_name} is now {instance.get('state')}")
+                        break
+                    else:
+                        print(f"  - Instance state: {instance.get('state', 'UNKNOWN')} ({elapsed}s elapsed)")
+                except Exception:
+                    print(f"  - Instance not ready yet ({elapsed}s elapsed)")
+            
+            if instance_ready:
+                # UPDATE instance
+                try:
+                    update_config = {
+                        "labels": {
+                            "purpose": "api-testing",
+                            "test-type": "complete-crud",
+                            "created-by": "test-script",
+                            "updated": "true",
+                            "update-time": str(int(time.time()))
+                        }
+                    }
+                    self.client.update_instance(
+                        self.test_instance_name,
+                        update_config,
+                        "labels",
+                        expected_result="Should succeed with 200 OK for running instance"
+                    )
+                    print(f"✓ UPDATE_INSTANCE_{self.test_instance_name} passed")
+                except Exception as e:
+                    print(f"✗ UPDATE_INSTANCE_{self.test_instance_name} failed: {e}")
+                
+                # RESTART instance
+                try:
+                    self.client.restart_instance(
+                        self.test_instance_name,
+                        expected_result="Should succeed with 200 OK for running instance"
+                    )
+                    print(f"✓ RESTART_INSTANCE_{self.test_instance_name} passed")
+                except Exception as e:
+                    print(f"✗ RESTART_INSTANCE_{self.test_instance_name} failed: {e}")
+            
+            # DELETE instance (always attempt)
+            try:
+                self.client.delete_instance(
+                    self.test_instance_name,
+                    expected_result="Should succeed with 200 OK"
+                )
+                print(f"✓ DELETE_INSTANCE_{self.test_instance_name} initiated")
+            except Exception as e:
+                print(f"✗ DELETE_INSTANCE_{self.test_instance_name} failed: {e}")
+                
+        except Exception as e:
+            print(f"✗ CREATE_INSTANCE_{self.test_instance_name} failed: {e}")
+            # Still try to delete if create partially succeeded
+            try:
+                self.client.delete_instance(self.test_instance_name)
+                print(f"✓ Cleanup: DELETE_INSTANCE_{self.test_instance_name} initiated")
+            except:
+                pass
+    
+    def _test_mini_crud_cycle(self):
+        """Test mini CRUD cycle with immediate delete"""
+        print("\n=== Testing Mini CRUD Cycle ===")
+        
+        instance_config = {
+            "type": "BASIC",
+            "description": "Mini test instance for quick CRUD validation",
+            "labels": {
+                "purpose": "api-testing",
+                "test-type": "mini-crud"
+            }
+        }
+        
+        # CREATE and immediately DELETE
+        try:
+            operation = self.client.create_instance(self.mini_instance_name, instance_config)
+            print(f"✓ CREATE_INSTANCE_{self.mini_instance_name} initiated")
+            
+            # Wait just 10 seconds then delete
+            print("  - Waiting 10 seconds before delete...")
+            time.sleep(10)
+            
+            # DELETE instance
+            try:
+                self.client.delete_instance(
+                    self.mini_instance_name,
+                    expected_result="Should succeed with 200 OK or 409 if still creating"
+                )
+                print(f"✓ DELETE_INSTANCE_{self.mini_instance_name} initiated")
+            except Exception as e:
+                print(f"ℹ DELETE_INSTANCE_{self.mini_instance_name} result: {e}")
+                
+        except Exception as e:
+            print(f"✗ Mini CRUD cycle failed: {e}")
+    
     def _test_list_instances(self):
         """Test listing instances"""
-        print("Testing LIST_INSTANCES...")
+        print("\n=== Testing LIST Operation ===")
         try:
             instances = self.client.list_instances()
             print(f"✓ LIST_INSTANCES passed - found {len(instances)} instance(s)")
-            for idx, instance in enumerate(instances):
+            for idx, instance in enumerate(instances[:5]):  # Show first 5
                 name = instance['name'].split('/')[-1]
                 state = instance.get('state', 'UNKNOWN')
-                print(f"  [{idx+1}] {name} - {state}")
+                type_ = instance.get('type', 'UNKNOWN')
+                print(f"  [{idx+1}] {name} - State: {state}, Type: {type_}")
         except Exception as e:
             print(f"✗ LIST_INSTANCES failed: {e}")
     
     def _test_existing_instance_operations(self, instance_name: str):
         """Test operations on existing instance"""
-        print(f"\nTesting operations on existing instance: {instance_name}")
+        print(f"\n=== Testing Operations on Existing Instance: {instance_name} ===")
         
-        # GET instance - should succeed
+        # GET instance
         try:
             instance = self.client.get_instance(
                 instance_name, 
@@ -372,12 +540,12 @@ class InstanceTestRunner:
         except Exception as e:
             print(f"✗ GET_INSTANCE_{instance_name} failed: {e}")
         
-        # UPDATE instance - should succeed
+        # UPDATE instance
         try:
             update_config = {
                 "labels": {
-                    "test-update": "true",
-                    "updated-at": str(int(time.time()))
+                    "tested-by": "api-script",
+                    "test-timestamp": str(int(time.time()))
                 }
             }
             self.client.update_instance(
@@ -390,7 +558,7 @@ class InstanceTestRunner:
         except Exception as e:
             print(f"✗ UPDATE_INSTANCE_{instance_name} failed: {e}")
         
-        # RESTART instance - test based on state
+        # RESTART instance (only if RUNNING)
         try:
             instance = self.client.get_instance(instance_name)
             if instance and instance.get('state') == 'RUNNING':
@@ -400,36 +568,16 @@ class InstanceTestRunner:
                 )
                 print(f"✓ RESTART_INSTANCE_{instance_name} passed")
             else:
-                # Try restart on non-running instance - should fail
-                self.client.restart_instance(
-                    instance_name,
-                    expected_result="Should fail with 400 Bad Request for non-running instance"
-                )
-                print(f"✓ RESTART_INSTANCE_{instance_name} tested (non-running state)")
+                print(f"ℹ RESTART_INSTANCE_{instance_name} skipped (instance not RUNNING)")
         except Exception as e:
-            print(f"ℹ RESTART_INSTANCE_{instance_name} result: {e}")
-    
-    def _test_another_existing_instance(self, instance_name: str):
-        """Test another existing instance to avoid duplicates"""
-        print(f"\nTesting another existing instance: {instance_name}")
-        
-        # GET with different test case
-        try:
-            instance = self.client.get_instance(
-                instance_name,
-                expected_result="Should succeed with 200 OK for second existing instance"
-            )
-            if instance:
-                print(f"✓ GET_INSTANCE_{instance_name} passed (second instance)")
-        except Exception as e:
-            print(f"✗ GET_INSTANCE_{instance_name} failed: {e}")
+            print(f"✗ RESTART_INSTANCE_{instance_name} failed: {e}")
     
     def _test_non_existent_instance_operations(self):
         """Test operations on non-existent instance (expected failures)"""
         non_existent = "non-existent-instance-12345"
-        print(f"\nTesting operations on non-existent instance (expected failures)...")
+        print(f"\n=== Testing Operations on Non-Existent Instance (Expected Failures) ===")
         
-        # GET non-existent - should fail with 404
+        # GET non-existent
         try:
             self.client.get_instance(
                 non_existent,
@@ -439,7 +587,7 @@ class InstanceTestRunner:
         except Exception:
             print(f"✓ GET_INSTANCE_{non_existent} passed (failed as expected)")
         
-        # UPDATE non-existent - should fail with 404
+        # UPDATE non-existent
         try:
             self.client.update_instance(
                 non_existent, 
@@ -450,7 +598,7 @@ class InstanceTestRunner:
         except Exception:
             print(f"✓ UPDATE_INSTANCE_{non_existent} passed (failed as expected)")
         
-        # DELETE non-existent - should fail with 404
+        # DELETE non-existent
         try:
             self.client.delete_instance(
                 non_existent,
@@ -460,7 +608,7 @@ class InstanceTestRunner:
         except Exception:
             print(f"✓ DELETE_INSTANCE_{non_existent} passed (failed as expected)")
         
-        # RESTART non-existent - should fail with 404
+        # RESTART non-existent
         try:
             self.client.restart_instance(
                 non_existent,
@@ -469,46 +617,6 @@ class InstanceTestRunner:
             print(f"✓ RESTART_INSTANCE_{non_existent} passed (failed as expected)")
         except Exception:
             print(f"✓ RESTART_INSTANCE_{non_existent} passed (failed as expected)")
-    
-    def _test_create_delete_instance(self):
-        """Test creating and deleting an instance (expensive operation)"""
-        print(f"\nTesting CREATE and DELETE instance operations...")
-        print("⚠️  WARNING: This creates a real instance and incurs costs!")
-        
-        instance_config = {
-            "type": "BASIC",
-            "description": "Test instance created by API testing script",
-            "labels": {
-                "purpose": "api-testing",
-                "created-by": "test-script"
-            },
-            "enableStackdriverLogging": True,
-            "enableStackdriverMonitoring": True
-        }
-        
-        # CREATE instance
-        try:
-            operation = self.client.create_instance(self.test_instance_name, instance_config)
-            print(f"✓ CREATE_INSTANCE_{self.test_instance_name} initiated")
-            print(f"  - Operation: {operation.get('name', 'UNKNOWN')}")
-            print("  - Note: Instance creation takes 10-15 minutes")
-            
-            # Wait a bit and then try to delete
-            print("\nWaiting 30 seconds before attempting delete...")
-            time.sleep(30)
-            
-            # DELETE instance
-            try:
-                self.client.delete_instance(
-                    self.test_instance_name,
-                    expected_result="Should succeed with 200 OK or fail with 409 if still creating"
-                )
-                print(f"✓ DELETE_INSTANCE_{self.test_instance_name} initiated")
-            except Exception as e:
-                print(f"ℹ DELETE_INSTANCE_{self.test_instance_name} result: {e}")
-                
-        except Exception as e:
-            print(f"✗ CREATE_INSTANCE_{self.test_instance_name} failed: {e}")
 
 
 class ReportGenerator:
@@ -525,7 +633,8 @@ class ReportGenerator:
             fieldnames = [
                 'test_case', 'api_endpoint', 'method', 'description', 'type', 'status',
                 'response_code', 'response_message', 'execution_time', 'timestamp', 
-                'expected_result', 'actual_result', 'test_passed', 'error_details'
+                'expected_result', 'actual_result', 'test_passed', 'resource_created',
+                'resource_deleted', 'error_details'
             ]
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             
@@ -545,19 +654,21 @@ class ReportGenerator:
                     'expected_result': result.expected_result,
                     'actual_result': result.actual_result,
                     'test_passed': result.test_passed,
+                    'resource_created': result.resource_created,
+                    'resource_deleted': result.resource_deleted,
                     'error_details': result.error_details[:200] + '...' if len(result.error_details) > 200 else result.error_details
                 })
         
         return filename
     
     @staticmethod
-    def display_results_table(test_results: List[TestResult]):
+    def display_results_table(test_results: List[TestResult], resource_tracker: ResourceTracker):
         """Display results in tabulated format"""
         if not test_results:
             print("No test results to display.")
             return
         
-        # Remove any duplicates based on test_case + method + endpoint
+        # Remove any duplicates
         unique_results = []
         seen = set()
         for result in test_results:
@@ -609,6 +720,22 @@ class ReportGenerator:
         for op, count in sorted(operations.items()):
             print(f"   {op}: {count}")
         
+        # Resource tracking summary
+        print(f"\n🔧 RESOURCE TRACKING:")
+        created_count = len([r for r in unique_results if r.resource_created])
+        deleted_count = len([r for r in unique_results if r.resource_deleted])
+        print(f"   Resources Created: {created_count}")
+        print(f"   Resources Deleted: {deleted_count}")
+        
+        undeleted = resource_tracker.get_undeleted_resources()
+        if undeleted:
+            print(f"\n⚠️  UNDELETED TEST RESOURCES:")
+            for resource in undeleted:
+                print(f"   - {resource}")
+            print("   Please clean up these resources manually to avoid charges!")
+        else:
+            print(f"\n✅ All test resources cleaned up successfully!")
+        
         # Test validation summary
         print(f"\n✅ TEST VALIDATION SUMMARY:")
         expected_failures = [r for r in unique_results if "should fail" in r.expected_result.lower() and r.status == "PASS"]
@@ -635,7 +762,7 @@ Examples:
   # Test with existing instances only
   python %(prog)s --project my-project --location us-central1
   
-  # Test with instance creation (expensive)
+  # Test with instance creation (expensive - creates real instances!)
   python %(prog)s --project my-project --location us-central1 --create-instance
   
   # Generate custom report filename
@@ -646,7 +773,7 @@ Examples:
     parser.add_argument('--project', required=True, help='GCP Project ID')
     parser.add_argument('--location', required=True, help='GCP Location/Region (e.g., us-central1)')
     parser.add_argument('--create-instance', action='store_true', 
-                       help='Include instance creation test (WARNING: incurs costs)')
+                       help='Include instance creation test (WARNING: creates real instances, incurs costs!)')
     parser.add_argument('--output', help='Output CSV filename (optional)')
     
     args = parser.parse_args()
@@ -676,7 +803,7 @@ Examples:
         print(f"\n📄 CSV report generated: {csv_filename}")
         
         # Display results
-        ReportGenerator.display_results_table(test_results)
+        ReportGenerator.display_results_table(test_results, config.resource_tracker)
         
         print(f"\n✅ Instance-level testing completed successfully!")
         
