@@ -605,11 +605,11 @@ class CDAPClient:
 class PipelineTestRunner:
     """Test runner for pipeline-level operations"""
     
-    def __init__(self, client: CDAPClient, pipeline_config: Dict[str, Any], skip_cleanup: bool = False):
+    def __init__(self, client: CDAPClient, pipeline_config: Dict[str, Any], pipeline_name: str, skip_cleanup: bool = False):
         self.client = client
         self.pipeline_config = pipeline_config
         self.skip_cleanup = skip_cleanup
-        self.test_pipeline_name = f"test-pipeline-{int(time.time())}"
+        self.test_pipeline_name = pipeline_name
         self.test_profile_name = f"test-profile-{int(time.time())}"
         self.test_key_name = f"test-key-{int(time.time())}"
     
@@ -680,7 +680,7 @@ class PipelineTestRunner:
         """Test complete pipeline workflow: CREATE -> DEPLOY -> UPDATE -> LIST -> START -> STOP -> DELETE"""
         print("=== Testing Complete Pipeline Workflow ===")
         
-        # Update the pipeline config name if it has one
+        # Update the pipeline config name to match the test pipeline name
         pipeline_config_for_test = self.pipeline_config.copy()
         if "name" in pipeline_config_for_test:
             pipeline_config_for_test["name"] = self.test_pipeline_name
@@ -1221,13 +1221,19 @@ class ReportGenerator:
                 print(f"   - {result.test_case}: {result.actual_result}")
 
 
-def load_pipeline_config(config_file: str) -> Dict[str, Any]:
-    """Load pipeline configuration from JSON file"""
+def load_pipeline_config(config_file: str) -> Tuple[Dict[str, Any], str]:
+    """Load pipeline configuration from JSON file and extract pipeline name from filename"""
     try:
+        # Extract pipeline name from filename (remove path and .json extension)
+        pipeline_name = os.path.splitext(os.path.basename(config_file))[0]
+        
         with open(config_file, 'r') as f:
             config = json.load(f)
+        
         print(f"✓ Loaded pipeline configuration from: {config_file}")
-        return config
+        print(f"✓ Pipeline name: {pipeline_name}")
+        
+        return config, pipeline_name
     except FileNotFoundError:
         raise ValueError(f"Pipeline configuration file not found: {config_file}")
     except json.JSONDecodeError as e:
@@ -1257,6 +1263,8 @@ Examples:
 
 Pipeline Configuration JSON Format:
   The pipeline configuration file should be a valid Data Fusion pipeline JSON export.
+  The pipeline name will be extracted from the JSON filename (e.g., "my-pipeline.json" -> pipeline name: "my-pipeline")
+  
   Example structure:
   {
     "name": "my-pipeline",
@@ -1296,8 +1304,8 @@ Pipeline Configuration JSON Format:
             print("Run: export GOOGLE_AUTH_TOKEN=$(gcloud auth print-access-token)")
             return
         
-        # Load pipeline configuration
-        pipeline_config = load_pipeline_config(args.pipeline_config)
+        # Load pipeline configuration and extract name from filename
+        pipeline_config, pipeline_name = load_pipeline_config(args.pipeline_config)
         
         # Initialize configuration
         config = Config(
@@ -1317,7 +1325,7 @@ Pipeline Configuration JSON Format:
         
         # Create CDAP client and run tests
         cdap_client = CDAPClient(api_endpoint, config)
-        runner = PipelineTestRunner(cdap_client, pipeline_config, args.skip_cleanup)
+        runner = PipelineTestRunner(cdap_client, pipeline_config, pipeline_name, args.skip_cleanup)
         test_results = runner.run_tests()
         
         # Generate reports
