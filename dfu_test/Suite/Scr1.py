@@ -813,180 +813,356 @@ class TestRunner:
         self.manager = manager
         self.test_instance_name = f"test-instance-{int(time.time())}"
         self.test_pipeline_name = f"test-pipeline-{int(time.time())}"
+        self.test_profile_name = f"test-profile-{int(time.time())}"
+        self.test_key_name = f"test-key-{int(time.time())}"
     
     def run_comprehensive_tests(self) -> List[TestResult]:
         """Run comprehensive test suite"""
         print("=== Starting Main Data Fusion API Test Suite ===\n")
         
-        # Test 1: List existing instances (should always work)
-        self._test_list_instances()
+        # Test 1: Instance Level Operations (Control Plane)
+        self._test_instance_operations()
         
-        # Test 2: Test invalid instance operations (expected failures)
-        self._test_invalid_operations()
-        
-        # Test 3: Test with existing instances (if any)
+        # Test 2: Pipeline Level Operations (Data Plane) - if instances exist
         instances = self.manager.list_instances()
         if instances:
             existing_instance = instances[0]['name'].split('/')[-1]
-            self._test_existing_instance_operations(existing_instance)
-        
-        # Test 4: Test pipeline operations on existing instances
-        if instances:
-            existing_instance = instances[0]['name'].split('/')[-1]
-            self._test_pipeline_operations(existing_instance)
-        
-        # Test 5: Test compute profile operations
-        if instances:
-            existing_instance = instances[0]['name'].split('/')[-1]
+            print(f"\n--- Testing on instance: {existing_instance} ---\n")
+            
+            # Pipeline CRUD operations
+            self._test_pipeline_crud_operations(existing_instance)
+            
+            # Pipeline execution operations
+            self._test_pipeline_execution_operations(existing_instance)
+            
+            # Compute profile operations
             self._test_compute_profile_operations(existing_instance)
-        
-        # Test 6: Test security operations
-        if instances:
-            existing_instance = instances[0]['name'].split('/')[-1]
+            
+            # Security operations
             self._test_security_operations(existing_instance)
+        else:
+            print("No instances found for testing pipeline operations")
         
         return self.manager.config.test_results
     
-    def _test_list_instances(self):
-        """Test listing instances"""
-        try:
-            self.manager.list_instances()
-            print("✓ List instances test passed")
-        except Exception as e:
-            print(f"✗ List instances test failed: {e}")
-    
-    def _test_invalid_operations(self):
-        """Test operations that should fail"""
-        try:
-            # Test getting non-existent instance
-            self.manager.instance_client.get_instance("non-existent-instance-12345")
-        except Exception:
-            print("✓ Get non-existent instance test passed (expected failure)")
+    def _test_instance_operations(self):
+        """Test all instance level operations"""
+        print("=== Testing Instance Level Operations ===")
         
+        # LIST instances (should always work)
         try:
-            # Test deleting non-existent instance
-            self.manager.instance_client.delete_instance("non-existent-instance-12345")
-        except Exception:
-            print("✓ Delete non-existent instance test passed (expected failure)")
-    
-    def _test_existing_instance_operations(self, instance_name: str):
-        """Test operations on existing instance"""
-        try:
-            # Test getting existing instance
-            self.manager.instance_client.get_instance(instance_name)
-            print(f"✓ Get existing instance '{instance_name}' test passed")
+            instances = self.manager.list_instances()
+            print(f"✓ LIST_INSTANCES test passed (found {len(instances)} instances)")
         except Exception as e:
-            print(f"✗ Get existing instance test failed: {e}")
+            print(f"✗ LIST_INSTANCES test failed: {e}")
         
+        # Test instance CRUD with a non-existent instance (expected failures)
+        non_existent = "non-existent-instance-12345"
+        
+        # GET non-existent instance (expected failure)
         try:
-            # Test getting CDAP endpoint
-            self.manager.get_cdap_client(instance_name)
-            print(f"✓ Get CDAP client for '{instance_name}' test passed")
-        except Exception as e:
-            print(f"✗ Get CDAP client test failed: {e}")
+            self.manager.instance_client.get_instance(non_existent)
+            print(f"✗ GET_INSTANCE_{non_existent} should have failed")
+        except Exception:
+            print(f"✓ GET_INSTANCE_{non_existent} test passed (expected failure)")
+        
+        # UPDATE non-existent instance (expected failure)
+        try:
+            self.manager.instance_client.update_instance(non_existent, {"description": "Updated"})
+            print(f"✗ UPDATE_INSTANCE_{non_existent} should have failed")
+        except Exception:
+            print(f"✓ UPDATE_INSTANCE_{non_existent} test passed (expected failure)")
+        
+        # DELETE non-existent instance (expected failure)
+        try:
+            self.manager.instance_client.delete_instance(non_existent)
+            print(f"✗ DELETE_INSTANCE_{non_existent} should have failed")
+        except Exception:
+            print(f"✓ DELETE_INSTANCE_{non_existent} test passed (expected failure)")
+        
+        # RESTART non-existent instance (expected failure)
+        try:
+            self.manager.instance_client.restart_instance(non_existent)
+            print(f"✗ RESTART_INSTANCE_{non_existent} should have failed")
+        except Exception:
+            print(f"✓ RESTART_INSTANCE_{non_existent} test passed (expected failure)")
+        
+        # Note: CREATE_INSTANCE is expensive and long-running, so we skip it in tests
+        print("ℹ CREATE_INSTANCE test skipped (expensive operation)")
     
-    def _test_pipeline_operations(self, instance_name: str):
-        """Test pipeline operations"""
+    def _test_pipeline_crud_operations(self, instance_name: str):
+        """Test complete pipeline CRUD operations"""
+        print("\n=== Testing Pipeline Level CRUD Operations ===")
+        
+        cdap_client = self.manager.get_cdap_client(instance_name)
+        if not cdap_client:
+            print("✗ Could not get CDAP client for pipeline operations")
+            return
+        
+        namespace = "default"
+        
+        # LIST all pipelines
         try:
-            cdap_client = self.manager.get_cdap_client(instance_name)
-            if not cdap_client:
-                print("✗ Could not get CDAP client for pipeline operations")
-                return
-            
-            # Test listing pipelines
-            cdap_client.list_pipelines("default")
-            print(f"✓ List pipelines test passed")
-            
-            # Test listing batch pipelines
-            cdap_client.list_batch_pipelines("default")
-            print(f"✓ List batch pipelines test passed")
-            
+            pipelines = cdap_client.list_pipelines(namespace)
+            print(f"✓ LIST_PIPELINES_{namespace} test passed")
         except Exception as e:
-            print(f"✗ Pipeline operations test failed: {e}")
+            print(f"✗ LIST_PIPELINES_{namespace} test failed: {e}")
+        
+        # LIST batch pipelines specifically
+        try:
+            batch_pipelines = cdap_client.list_batch_pipelines(namespace)
+            print(f"✓ LIST_BATCH_PIPELINES_{namespace} test passed")
+        except Exception as e:
+            print(f"✗ LIST_BATCH_PIPELINES_{namespace} test failed: {e}")
+        
+        # LIST realtime pipelines specifically
+        try:
+            realtime_pipelines = cdap_client.list_realtime_pipelines(namespace)
+            print(f"✓ LIST_REALTIME_PIPELINES_{namespace} test passed")
+        except Exception as e:
+            print(f"✗ LIST_REALTIME_PIPELINES_{namespace} test failed: {e}")
+        
+        # Test pipeline CRUD with test pipeline
+        test_pipeline_config = {
+            "name": self.test_pipeline_name,
+            "description": "Test pipeline for API validation",
+            "artifact": {
+                "name": "cdap-data-pipeline",
+                "version": "6.10.0",
+                "scope": "system"
+            },
+            "config": {
+                "stages": [
+                    {
+                        "name": "MockSource",
+                        "plugin": {
+                            "name": "Mock",
+                            "type": "batchsource",
+                            "label": "Mock Source",
+                            "artifact": {
+                                "name": "core-plugins",
+                                "version": "2.11.0",
+                                "scope": "system"
+                            },
+                            "properties": {}
+                        }
+                    },
+                    {
+                        "name": "MockSink",
+                        "plugin": {
+                            "name": "Mock",
+                            "type": "batchsink",
+                            "label": "Mock Sink",
+                            "artifact": {
+                                "name": "core-plugins",
+                                "version": "2.11.0",
+                                "scope": "system"
+                            },
+                            "properties": {}
+                        }
+                    }
+                ],
+                "connections": [
+                    {
+                        "from": "MockSource",
+                        "to": "MockSink"
+                    }
+                ],
+                "engine": "spark"
+            }
+        }
+        
+        # CREATE/DEPLOY pipeline
+        try:
+            cdap_client.deploy_pipeline(namespace, self.test_pipeline_name, test_pipeline_config)
+            print(f"✓ DEPLOY_PIPELINE_{self.test_pipeline_name} test passed")
+            
+            # GET pipeline
+            try:
+                pipeline_details = cdap_client.get_pipeline(namespace, self.test_pipeline_name)
+                print(f"✓ GET_PIPELINE_{self.test_pipeline_name} test passed")
+            except Exception as e:
+                print(f"✗ GET_PIPELINE_{self.test_pipeline_name} test failed: {e}")
+            
+            # UPDATE pipeline (redeploy with changes)
+            try:
+                test_pipeline_config["description"] = "Updated test pipeline"
+                cdap_client.update_pipeline(namespace, self.test_pipeline_name, test_pipeline_config)
+                print(f"✓ UPDATE_PIPELINE_{self.test_pipeline_name} test passed")
+            except Exception as e:
+                print(f"✗ UPDATE_PIPELINE_{self.test_pipeline_name} test failed: {e}")
+            
+            # DELETE pipeline
+            try:
+                cdap_client.delete_pipeline(namespace, self.test_pipeline_name)
+                print(f"✓ DELETE_PIPELINE_{self.test_pipeline_name} test passed")
+            except Exception as e:
+                print(f"✗ DELETE_PIPELINE_{self.test_pipeline_name} test failed: {e}")
+                
+        except Exception as e:
+            print(f"✗ DEPLOY_PIPELINE_{self.test_pipeline_name} test failed: {e}")
+    
+    def _test_pipeline_execution_operations(self, instance_name: str):
+        """Test pipeline execution operations"""
+        print("\n=== Testing Pipeline Level Execution Operations ===")
+        
+        cdap_client = self.manager.get_cdap_client(instance_name)
+        if not cdap_client:
+            print("✗ Could not get CDAP client for pipeline execution")
+            return
+        
+        namespace = "default"
+        
+        # Test with non-existent pipeline (expected failures)
+        non_existent_pipeline = "non-existent-pipeline-12345"
+        
+        # START batch pipeline (expected failure)
+        try:
+            cdap_client.start_batch_pipeline(namespace, non_existent_pipeline)
+            print(f"✗ START_BATCH_PIPELINE_{non_existent_pipeline} should have failed")
+        except Exception:
+            print(f"✓ START_BATCH_PIPELINE_{non_existent_pipeline} test passed (expected failure)")
+        
+        # STOP batch pipeline (expected failure)
+        try:
+            cdap_client.stop_batch_pipeline(namespace, non_existent_pipeline)
+            print(f"✗ STOP_BATCH_PIPELINE_{non_existent_pipeline} should have failed")
+        except Exception:
+            print(f"✓ STOP_BATCH_PIPELINE_{non_existent_pipeline} test passed (expected failure)")
+        
+        # START realtime pipeline (expected failure)
+        try:
+            cdap_client.start_realtime_pipeline(namespace, non_existent_pipeline)
+            print(f"✗ START_REALTIME_PIPELINE_{non_existent_pipeline} should have failed")
+        except Exception:
+            print(f"✓ START_REALTIME_PIPELINE_{non_existent_pipeline} test passed (expected failure)")
+        
+        # STOP realtime pipeline (expected failure)
+        try:
+            cdap_client.stop_realtime_pipeline(namespace, non_existent_pipeline)
+            print(f"✗ STOP_REALTIME_PIPELINE_{non_existent_pipeline} should have failed")
+        except Exception:
+            print(f"✓ STOP_REALTIME_PIPELINE_{non_existent_pipeline} test passed (expected failure)")
+        
+        # GET pipeline runs
+        try:
+            cdap_client.get_pipeline_runs(namespace, non_existent_pipeline, "batch")
+            print(f"✗ GET_PIPELINE_RUNS_{non_existent_pipeline}_BATCH should have failed")
+        except Exception:
+            print(f"✓ GET_PIPELINE_RUNS_{non_existent_pipeline}_BATCH test passed (expected failure)")
     
     def _test_compute_profile_operations(self, instance_name: str):
         """Test compute profile operations"""
+        print("\n=== Testing Compute Profile Operations ===")
+        
+        cdap_client = self.manager.get_cdap_client(instance_name)
+        if not cdap_client:
+            print("✗ Could not get CDAP client for compute profile operations")
+            return
+        
+        namespace = "default"
+        
+        # LIST compute profiles
         try:
-            cdap_client = self.manager.get_cdap_client(instance_name)
-            if not cdap_client:
-                print("✗ Could not get CDAP client for compute profile operations")
-                return
-            
-            # Test listing compute profiles
-            cdap_client.list_compute_profiles("default")
-            print(f"✓ List compute profiles test passed")
-            
-            # Test creating a test compute profile (basic validation)
-            test_profile_config = {
-                "label": "Test Profile",
-                "description": "Test compute profile for API testing",
-                "provisioner": {
-                    "name": "gcp-dataproc",
-                    "properties": [
-                        {"name": "projectId", "value": self.manager.config.project_id},
-                        {"name": "region", "value": self.manager.config.location}
-                    ]
-                }
-            }
-            
-            test_profile_name = f"test-profile-{int(time.time())}"
-            try:
-                cdap_client.create_compute_profile("default", test_profile_name, test_profile_config)
-                print(f"✓ Create compute profile test passed")
-                
-                # Test getting the created profile
-                cdap_client.get_compute_profile("default", test_profile_name)
-                print(f"✓ Get compute profile test passed")
-                
-                # Clean up - delete the test profile
-                cdap_client.delete_compute_profile("default", test_profile_name)
-                print(f"✓ Delete compute profile test passed")
-                
-            except Exception as e:
-                print(f"✗ Compute profile CRUD operations test failed: {e}")
-            
+            profiles = cdap_client.list_compute_profiles(namespace)
+            print(f"✓ LIST_COMPUTE_PROFILES_{namespace} test passed")
         except Exception as e:
-            print(f"✗ Compute profile operations test failed: {e}")
+            print(f"✗ LIST_COMPUTE_PROFILES_{namespace} test failed: {e}")
+        
+        # Test compute profile CRUD
+        test_profile_config = {
+            "label": "Test Compute Profile",
+            "description": "Test compute profile for API testing",
+            "provisioner": {
+                "name": "gcp-dataproc",
+                "properties": [
+                    {"name": "projectId", "value": self.manager.config.project_id},
+                    {"name": "region", "value": self.manager.config.location},
+                    {"name": "masterInstanceType", "value": "n1-standard-2"},
+                    {"name": "workerInstanceType", "value": "n1-standard-2"},
+                    {"name": "numWorkers", "value": "2"}
+                ]
+            }
+        }
+        
+        # CREATE compute profile
+        try:
+            cdap_client.create_compute_profile(namespace, self.test_profile_name, test_profile_config)
+            print(f"✓ CREATE_COMPUTE_PROFILE_{namespace}_{self.test_profile_name} test passed")
+            
+            # GET compute profile
+            try:
+                profile = cdap_client.get_compute_profile(namespace, self.test_profile_name)
+                print(f"✓ GET_COMPUTE_PROFILE_{namespace}_{self.test_profile_name} test passed")
+            except Exception as e:
+                print(f"✗ GET_COMPUTE_PROFILE_{namespace}_{self.test_profile_name} test failed: {e}")
+            
+            # UPDATE compute profile
+            try:
+                test_profile_config["description"] = "Updated compute profile"
+                cdap_client.update_compute_profile(namespace, self.test_profile_name, test_profile_config)
+                print(f"✓ UPDATE_COMPUTE_PROFILE_{namespace}_{self.test_profile_name} test passed")
+            except Exception as e:
+                print(f"✗ UPDATE_COMPUTE_PROFILE_{namespace}_{self.test_profile_name} test failed: {e}")
+            
+            # DELETE compute profile
+            try:
+                cdap_client.delete_compute_profile(namespace, self.test_profile_name)
+                print(f"✓ DELETE_COMPUTE_PROFILE_{namespace}_{self.test_profile_name} test passed")
+            except Exception as e:
+                print(f"✗ DELETE_COMPUTE_PROFILE_{namespace}_{self.test_profile_name} test failed: {e}")
+                
+        except Exception as e:
+            print(f"✗ CREATE_COMPUTE_PROFILE_{namespace}_{self.test_profile_name} test failed: {e}")
     
     def _test_security_operations(self, instance_name: str):
         """Test security and access control operations"""
+        print("\n=== Testing Security Operations ===")
+        
+        cdap_client = self.manager.get_cdap_client(instance_name)
+        if not cdap_client:
+            print("✗ Could not get CDAP client for security operations")
+            return
+        
+        namespace = "default"
+        
+        # LIST secure keys
         try:
-            cdap_client = self.manager.get_cdap_client(instance_name)
-            if not cdap_client:
-                print("✗ Could not get CDAP client for security operations")
-                return
-            
-            # Test listing secure keys
-            cdap_client.list_secure_keys("default")
-            print(f"✓ List secure keys test passed")
-            
-            # Test creating a test secure key (basic validation)
-            test_key_data = {
-                "description": "Test secure key for API testing",
-                "data": "test-secret-value",
-                "properties": {
-                    "test-property": "test-value"
-                }
-            }
-            
-            test_key_name = f"test-key-{int(time.time())}"
-            try:
-                cdap_client.create_secure_key("default", test_key_name, test_key_data)
-                print(f"✓ Create secure key test passed")
-                
-                # Test getting secure key metadata
-                cdap_client.get_secure_key_metadata("default", test_key_name)
-                print(f"✓ Get secure key metadata test passed")
-                
-                # Clean up - delete the test key
-                cdap_client.delete_secure_key("default", test_key_name)
-                print(f"✓ Delete secure key test passed")
-                
-            except Exception as e:
-                print(f"✗ Secure key CRUD operations test failed: {e}")
-            
+            keys = cdap_client.list_secure_keys(namespace)
+            print(f"✓ LIST_SECURE_KEYS_{namespace} test passed")
         except Exception as e:
-            print(f"✗ Security operations test failed: {e}")
+            print(f"✗ LIST_SECURE_KEYS_{namespace} test failed: {e}")
+        
+        # Test secure key CRUD
+        test_key_data = {
+            "description": "Test secure key for API testing",
+            "data": "test-secret-value",
+            "properties": {
+                "test-property": "test-value"
+            }
+        }
+        
+        # CREATE secure key
+        try:
+            cdap_client.create_secure_key(namespace, self.test_key_name, test_key_data)
+            print(f"✓ CREATE_SECURE_KEY_{namespace}_{self.test_key_name} test passed")
+            
+            # GET secure key metadata
+            try:
+                metadata = cdap_client.get_secure_key_metadata(namespace, self.test_key_name)
+                print(f"✓ GET_SECURE_KEY_METADATA_{namespace}_{self.test_key_name} test passed")
+            except Exception as e:
+                print(f"✗ GET_SECURE_KEY_METADATA_{namespace}_{self.test_key_name} test failed: {e}")
+            
+            # DELETE secure key
+            try:
+                cdap_client.delete_secure_key(namespace, self.test_key_name)
+                print(f"✓ DELETE_SECURE_KEY_{namespace}_{self.test_key_name} test passed")
+            except Exception as e:
+                print(f"✗ DELETE_SECURE_KEY_{namespace}_{self.test_key_name} test failed: {e}")
+                
+        except Exception as e:
+            print(f"✗ CREATE_SECURE_KEY_{namespace}_{self.test_key_name} test failed: {e}")
 
 
 class ReportGenerator:
