@@ -4,11 +4,13 @@
 # Google Cloud Data Fusion CLI Test Script
 # Description: Tests all available gcloud beta data-fusion CLI commands
 # Author: Cloud Data Fusion Test Automation
-# Version: 1.2
+# Version: 1.3
 # 
 # IMPORTANT: This script is designed for users with custom role permissions 
 # that include only read operations. All update/modify operations are 
 # expected to fail due to insufficient permissions.
+#
+# Compatible with: Linux, macOS, BSD
 ###############################################################################
 
 # Color codes for output
@@ -18,21 +20,32 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Function to print colored output
+# Function to print colored output (cross-platform)
 print_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    printf "${BLUE}[INFO]${NC} %s\n" "$1"
 }
 
 print_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
+    printf "${GREEN}[SUCCESS]${NC} %s\n" "$1"
 }
 
 print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+    printf "${RED}[ERROR]${NC} %s\n" "$1"
 }
 
 print_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
+    printf "${YELLOW}[WARNING]${NC} %s\n" "$1"
+}
+
+# Function to calculate elapsed time (cross-platform)
+calculate_elapsed_time() {
+    local start=$1
+    local end=$2
+    local elapsed=$((end - start))
+    local hours=$((elapsed / 3600))
+    local minutes=$(((elapsed % 3600) / 60))
+    local seconds=$((elapsed % 60))
+    printf '%02d:%02d:%02d' $hours $minutes $seconds
 }
 
 # Function to display usage
@@ -174,6 +187,7 @@ execute_test() {
 }
 
 # Start testing
+start_time=$(date +%s)
 log "=== Google Cloud Data Fusion CLI Test Suite ==="
 log "Project: $PROJECT_ID"
 log "Location: $LOCATION"
@@ -337,7 +351,7 @@ CSV Results: $CSV_FILE
 Detailed Log: $LOG_FILE
 Test Summary: $TEST_SUMMARY
 
-Test Execution Time: $(date -d@$(($(date +%s) - start_time)) -u +%H:%M:%S)
+Test Execution Time: $(calculate_elapsed_time $start_time $(date +%s))
 ================================================================================
 EOF
 
