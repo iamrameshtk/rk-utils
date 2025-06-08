@@ -5,10 +5,10 @@ Google Cloud Data Fusion Pipeline Level Operations Script (Data Plane)
 This script tests pipeline-level CRUD operations, execution, compute profiles, and security.
 
 Features:
-- Pipeline CRUD operations (CREATE, GET, UPDATE, DELETE, LIST)
-- Pipeline execution operations (START, STOP, GET_RUNS)
-- Compute profile management
+- Complete pipeline CRUD workflow (CREATE, DEPLOY, UPDATE, LIST, START, STOP, DELETE)
+- Compute profile lifecycle (CREATE, GET, DISABLE, DELETE)
 - Security key management
+- Resource tracking and cleanup validation
 - Command-line parameter support
 - CSV report generation
 - Tabulated output display
@@ -60,6 +60,50 @@ class TestResult:
     expected_result: str = ""
     actual_result: str = ""
     test_passed: bool = False
+    resource_created: str = ""  # Track created resources
+    resource_deleted: bool = False  # Track if resource was deleted
+
+
+@dataclass
+class ResourceTracker:
+    """Track created resources for cleanup validation"""
+    created_pipelines: Dict[str, bool] = field(default_factory=dict)  # name -> deleted
+    created_profiles: Dict[str, bool] = field(default_factory=dict)
+    created_keys: Dict[str, bool] = field(default_factory=dict)
+    
+    def add_pipeline(self, name: str):
+        self.created_pipelines[name] = False
+    
+    def add_profile(self, name: str):
+        self.created_profiles[name] = False
+    
+    def add_key(self, name: str):
+        self.created_keys[name] = False
+    
+    def mark_deleted(self, resource_type: str, name: str):
+        if resource_type == "pipeline" and name in self.created_pipelines:
+            self.created_pipelines[name] = True
+        elif resource_type == "profile" and name in self.created_profiles:
+            self.created_profiles[name] = True
+        elif resource_type == "key" and name in self.created_keys:
+            self.created_keys[name] = True
+    
+    def get_undeleted_resources(self) -> Dict[str, List[str]]:
+        undeleted = {}
+        
+        undeleted_pipelines = [name for name, deleted in self.created_pipelines.items() if not deleted]
+        if undeleted_pipelines:
+            undeleted['pipelines'] = undeleted_pipelines
+            
+        undeleted_profiles = [name for name, deleted in self.created_profiles.items() if not deleted]
+        if undeleted_profiles:
+            undeleted['profiles'] = undeleted_profiles
+            
+        undeleted_keys = [name for name, deleted in self.created_keys.items() if not deleted]
+        if undeleted_keys:
+            undeleted['keys'] = undeleted_keys
+            
+        return undeleted
 
 
 @dataclass
@@ -73,7 +117,8 @@ class Config:
     base_url: str = "https://datafusion.googleapis.com"
     api_version: str = "v1beta1"
     test_results: List[TestResult] = field(default_factory=list)
-    processed_tests: set = field(default_factory=set)  # Track processed test cases
+    processed_tests: set = field(default_factory=set)
+    resource_tracker: ResourceTracker = field(default_factory=ResourceTracker)
 
     def __post_init__(self):
         if not self.auth_token:
@@ -120,7 +165,8 @@ class CDAPClient:
     
     def _make_request(self, method: str, endpoint: str, test_case: str, description: str, 
                      operation_type: str = "Pipeline Level Operation", 
-                     expected_result: str = "", **kwargs) -> Tuple[Optional[requests.Response], TestResult]:
+                     expected_result: str = "", resource_name: str = "", 
+                     resource_type: str = "", **kwargs) -> Tuple[Optional[requests.Response], TestResult]:
         """Make HTTP request with test case tracking"""
         # Create unique test identifier
         url = f"{self.cdap_endpoint}{endpoint}"
@@ -154,6 +200,24 @@ class CDAPClient:
             
             error_details = "" if response.status_code < 400 else response.text[:200]
             
+            # Track resource creation
+            resource_created = ""
+            if method in ["PUT"] and response.status_code < 300 and resource_name:
+                resource_created = f"{resource_type}:{resource_name}" if resource_type else resource_name
+                # Add to tracker
+                if resource_type == "pipeline":
+                    self.config.resource_tracker.add_pipeline(resource_name)
+                elif resource_type == "profile":
+                    self.config.resource_tracker.add_profile(resource_name)
+                elif resource_type == "key":
+                    self.config.resource_tracker.add_key(resource_name)
+            
+            # Track resource deletion
+            resource_deleted = False
+            if method == "DELETE" and response.status_code < 300 and resource_name and resource_type:
+                resource_deleted = True
+                self.config.resource_tracker.mark_deleted(resource_type, resource_name)
+            
             test_result = TestResult(
                 test_case=test_case,
                 api_endpoint=url,
@@ -168,7 +232,9 @@ class CDAPClient:
                 error_details=error_details,
                 expected_result=expected_result,
                 actual_result=actual_result,
-                test_passed=test_passed
+                test_passed=test_passed,
+                resource_created=resource_created,
+                resource_deleted=resource_deleted
             )
             
             self.config.test_results.append(test_result)
@@ -219,17 +285,14 @@ class CDAPClient:
         expected_lower = expected_result.lower()
         
         if "should fail" in expected_lower or "expected failure" in expected_lower:
-            # Test should fail
             return status_code >= 400
         elif "should succeed" in expected_lower or "200" in expected_result:
-            # Test should succeed
             return 200 <= status_code < 300
         elif "404" in expected_result:
             return status_code == 404
         elif "400" in expected_result:
             return status_code == 400
         else:
-            # Default: success means 2xx status
             return 200 <= status_code < 300
 
     # Pipeline CRUD Operations
@@ -245,6 +308,8 @@ class CDAPClient:
             f"Deploy pipeline '{pipeline_name}' in namespace '{self.config.namespace}'",
             "Pipeline Level Operation",
             expected_result=expected_result,
+            resource_name=pipeline_name,
+            resource_type="pipeline",
             json=pipeline_config
         )
         if response:
@@ -293,7 +358,9 @@ class CDAPClient:
             f"DELETE_PIPELINE_{pipeline_name}",
             f"Delete pipeline '{pipeline_name}' from namespace '{self.config.namespace}'",
             "Pipeline Level Operation",
-            expected_result=expected_result
+            expected_result=expected_result,
+            resource_name=pipeline_name,
+            resource_type="pipeline"
         )
         if response:
             return response.json() if response.text else {"status": "deleted"}
@@ -402,6 +469,8 @@ class CDAPClient:
             f"Create compute profile '{profile_name}' in namespace '{self.config.namespace}'",
             "Compute Profile Operation",
             expected_result=expected_result,
+            resource_name=profile_name,
+            resource_type="profile",
             json=profile_config
         )
         if response:
@@ -422,22 +491,21 @@ class CDAPClient:
         )
         return response.json() if response else None
     
-    def update_compute_profile(self, profile_name: str, profile_config: Dict[str, Any],
-                             expected_result: str = "Should succeed with 200 OK") -> Optional[Dict[str, Any]]:
-        """Update compute profile"""
-        endpoint = f"/v3/namespaces/{self.config.namespace}/profiles/{profile_name}"
+    def disable_compute_profile(self, profile_name: str, expected_result: str = "Should succeed with 200 OK") -> Optional[Dict[str, Any]]:
+        """Disable compute profile"""
+        endpoint = f"/v3/namespaces/{self.config.namespace}/profiles/{profile_name}/disable"
         
-        print(f"Updating compute profile: {profile_name}")
+        print(f"Disabling compute profile: {profile_name}")
         response, _ = self._make_request(
-            'PUT', endpoint,
-            f"UPDATE_COMPUTE_PROFILE_{profile_name}",
-            f"Update compute profile '{profile_name}' in namespace '{self.config.namespace}'",
+            'POST', endpoint,
+            f"DISABLE_COMPUTE_PROFILE_{profile_name}",
+            f"Disable compute profile '{profile_name}' in namespace '{self.config.namespace}'",
             "Compute Profile Operation",
             expected_result=expected_result,
-            json=profile_config
+            json={}
         )
         if response:
-            return response.json() if response.text else {"status": "updated"}
+            return response.json() if response.text else {"status": "disabled"}
         return None
     
     def delete_compute_profile(self, profile_name: str, expected_result: str = "Should succeed with 200 OK") -> Optional[Dict[str, Any]]:
@@ -450,7 +518,9 @@ class CDAPClient:
             f"DELETE_COMPUTE_PROFILE_{profile_name}",
             f"Delete compute profile '{profile_name}' from namespace '{self.config.namespace}'",
             "Compute Profile Operation",
-            expected_result=expected_result
+            expected_result=expected_result,
+            resource_name=profile_name,
+            resource_type="profile"
         )
         if response:
             return response.json() if response.text else {"status": "deleted"}
@@ -483,6 +553,8 @@ class CDAPClient:
             f"Create secure key '{key_name}' in namespace '{self.config.namespace}'",
             "Security Operation",
             expected_result=expected_result,
+            resource_name=key_name,
+            resource_type="key",
             json=key_data
         )
         if response:
@@ -513,7 +585,9 @@ class CDAPClient:
             f"DELETE_SECURE_KEY_{key_name}",
             f"Delete secure key '{key_name}' from namespace '{self.config.namespace}'",
             "Security Operation",
-            expected_result=expected_result
+            expected_result=expected_result,
+            resource_name=key_name,
+            resource_type="key"
         )
         if response:
             return response.json() if response.text else {"status": "deleted"}
@@ -542,45 +616,30 @@ class PipelineTestRunner:
         print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print("="*60 + "\n")
         
-        # Test 1: Pipeline CRUD operations
-        self._test_pipeline_crud_operations()
+        # Test 1: Complete pipeline workflow
+        self._test_complete_pipeline_workflow()
         
-        # Test 2: Pipeline execution operations
-        self._test_pipeline_execution_operations()
+        # Test 2: Complete compute profile workflow
+        self._test_complete_compute_profile_workflow()
         
-        # Test 3: Compute profile operations
-        self._test_compute_profile_operations()
+        # Test 3: Complete security key workflow
+        self._test_complete_security_key_workflow()
         
-        # Test 4: Security operations
-        self._test_security_operations()
+        # Test 4: Test with existing resources
+        self._test_existing_resources()
         
-        # Test 5: Test with existing pipelines
-        self._test_existing_pipeline_operations()
+        # Test 5: Test expected failures
+        self._test_expected_failures()
         
         return self.client.config.test_results
     
-    def _test_pipeline_crud_operations(self):
-        """Test pipeline CRUD operations"""
-        print("=== Testing Pipeline CRUD Operations ===")
+    def _test_complete_pipeline_workflow(self):
+        """Test complete pipeline workflow: CREATE -> DEPLOY -> UPDATE -> LIST -> START -> STOP -> DELETE"""
+        print("=== Testing Complete Pipeline Workflow ===")
         
-        # LIST all pipelines - should succeed
-        try:
-            pipelines = self.client.list_pipelines()
-            print(f"✓ LIST_PIPELINES passed - found {len(pipelines) if pipelines else 0} pipeline(s)")
-        except Exception as e:
-            print(f"✗ LIST_PIPELINES failed: {e}")
-        
-        # LIST batch pipelines specifically - should succeed
-        try:
-            batch_pipelines = self.client.list_pipelines("cdap-data-pipeline")
-            print(f"✓ LIST_BATCH_PIPELINES passed")
-        except Exception as e:
-            print(f"✗ LIST_BATCH_PIPELINES failed: {e}")
-        
-        # CREATE pipeline - should succeed
         pipeline_config = {
             "name": self.test_pipeline_name,
-            "description": "Test pipeline for API validation",
+            "description": "Test pipeline for complete workflow validation",
             "artifact": {
                 "name": "cdap-data-pipeline",
                 "version": "6.10.0",
@@ -627,116 +686,290 @@ class PipelineTestRunner:
             }
         }
         
+        pipeline_created = False
+        
         try:
+            # Step 1: DEPLOY/CREATE pipeline
             self.client.deploy_pipeline(
                 self.test_pipeline_name, 
                 pipeline_config,
                 expected_result="Should succeed with 200 OK for valid pipeline config"
             )
-            print(f"✓ DEPLOY_PIPELINE_{self.test_pipeline_name} passed")
+            print(f"✓ Step 1: DEPLOY_PIPELINE_{self.test_pipeline_name} passed")
+            pipeline_created = True
             
-            # GET pipeline - should succeed
+            # Step 2: GET pipeline details
             try:
                 pipeline = self.client.get_pipeline(
                     self.test_pipeline_name,
                     expected_result="Should succeed with 200 OK for existing pipeline"
                 )
-                print(f"✓ GET_PIPELINE_{self.test_pipeline_name} passed")
+                print(f"✓ Step 2: GET_PIPELINE_{self.test_pipeline_name} passed")
             except Exception as e:
-                print(f"✗ GET_PIPELINE_{self.test_pipeline_name} failed: {e}")
+                print(f"✗ Step 2: GET_PIPELINE_{self.test_pipeline_name} failed: {e}")
             
-            # UPDATE pipeline - should succeed
+            # Step 3: UPDATE pipeline
             try:
-                pipeline_config["description"] = "Updated test pipeline"
+                pipeline_config["description"] = "Updated test pipeline for workflow validation"
+                pipeline_config["config"]["stages"][0]["plugin"]["label"] = "Updated Mock Source"
+                
                 self.client.update_pipeline(
                     self.test_pipeline_name, 
                     pipeline_config,
                     expected_result="Should succeed with 200 OK for valid update"
                 )
-                print(f"✓ UPDATE_PIPELINE_{self.test_pipeline_name} passed")
+                print(f"✓ Step 3: UPDATE_PIPELINE_{self.test_pipeline_name} passed")
             except Exception as e:
-                print(f"✗ UPDATE_PIPELINE_{self.test_pipeline_name} failed: {e}")
+                print(f"✗ Step 3: UPDATE_PIPELINE_{self.test_pipeline_name} failed: {e}")
             
-            # DELETE pipeline - should succeed (unless skip_cleanup)
+            # Step 4: LIST pipelines (verify our pipeline is there)
+            try:
+                pipelines = self.client.list_pipelines()
+                if pipelines and any(p.get('name') == self.test_pipeline_name for p in pipelines):
+                    print(f"✓ Step 4: LIST_PIPELINES verified {self.test_pipeline_name} exists")
+                else:
+                    print(f"✗ Step 4: LIST_PIPELINES did not find {self.test_pipeline_name}")
+            except Exception as e:
+                print(f"✗ Step 4: LIST_PIPELINES failed: {e}")
+            
+            # Step 5: START pipeline
+            try:
+                self.client.start_batch_pipeline(
+                    self.test_pipeline_name,
+                    expected_result="Should succeed with 200 OK for valid pipeline"
+                )
+                print(f"✓ Step 5: START_BATCH_PIPELINE_{self.test_pipeline_name} passed")
+                
+                # Wait a bit for the pipeline to start
+                time.sleep(5)
+            except Exception as e:
+                print(f"✗ Step 5: START_BATCH_PIPELINE_{self.test_pipeline_name} failed: {e}")
+            
+            # Step 6: STOP pipeline
+            try:
+                self.client.stop_batch_pipeline(
+                    self.test_pipeline_name,
+                    expected_result="Should succeed with 200 OK or 400 if already stopped"
+                )
+                print(f"✓ Step 6: STOP_BATCH_PIPELINE_{self.test_pipeline_name} passed")
+            except Exception as e:
+                print(f"✗ Step 6: STOP_BATCH_PIPELINE_{self.test_pipeline_name} failed: {e}")
+            
+            # Step 7: GET pipeline runs
+            try:
+                runs = self.client.get_pipeline_runs(
+                    self.test_pipeline_name,
+                    "batch",
+                    expected_result="Should succeed with 200 OK"
+                )
+                print(f"✓ Step 7: GET_PIPELINE_RUNS_{self.test_pipeline_name} passed")
+                if runs:
+                    print(f"  - Found {len(runs)} run(s)")
+            except Exception as e:
+                print(f"✗ Step 7: GET_PIPELINE_RUNS_{self.test_pipeline_name} failed: {e}")
+            
+            # Step 8: DELETE pipeline (cleanup)
             if not self.skip_cleanup:
                 try:
                     self.client.delete_pipeline(
                         self.test_pipeline_name,
-                        expected_result="Should succeed with 200 OK for existing pipeline"
+                        expected_result="Should succeed with 200 OK"
                     )
-                    print(f"✓ DELETE_PIPELINE_{self.test_pipeline_name} passed")
+                    print(f"✓ Step 8: DELETE_PIPELINE_{self.test_pipeline_name} passed")
                 except Exception as e:
-                    print(f"✗ DELETE_PIPELINE_{self.test_pipeline_name} failed: {e}")
+                    print(f"✗ Step 8: DELETE_PIPELINE_{self.test_pipeline_name} failed: {e}")
             else:
-                print(f"ℹ DELETE_PIPELINE_{self.test_pipeline_name} skipped (--skip-cleanup)")
+                print(f"ℹ Step 8: DELETE_PIPELINE_{self.test_pipeline_name} skipped (--skip-cleanup)")
                 
         except Exception as e:
-            print(f"✗ DEPLOY_PIPELINE_{self.test_pipeline_name} failed: {e}")
+            print(f"✗ Pipeline workflow failed at deployment: {e}")
+            # Cleanup if pipeline was created
+            if pipeline_created and not self.skip_cleanup:
+                try:
+                    self.client.delete_pipeline(self.test_pipeline_name)
+                    print(f"✓ Cleanup: Deleted pipeline {self.test_pipeline_name}")
+                except:
+                    pass
     
-    def _test_pipeline_execution_operations(self):
-        """Test pipeline execution operations"""
-        print("\n=== Testing Pipeline Execution Operations ===")
+    def _test_complete_compute_profile_workflow(self):
+        """Test complete compute profile workflow: CREATE -> GET -> DISABLE -> DELETE"""
+        print("\n=== Testing Complete Compute Profile Workflow ===")
         
-        non_existent = "non-existent-pipeline-12345"
+        profile_config = {
+            "label": "Test Compute Profile",
+            "description": "Test profile for complete workflow validation",
+            "provisioner": {
+                "name": "gcp-dataproc",
+                "properties": [
+                    {"name": "projectId", "value": self.client.config.project_id},
+                    {"name": "region", "value": self.client.config.location},
+                    {"name": "masterInstanceType", "value": "n1-standard-2"},
+                    {"name": "workerInstanceType", "value": "n1-standard-2"},
+                    {"name": "numWorkers", "value": "2"},
+                    {"name": "autoscalingPolicy", "value": ""}
+                ]
+            }
+        }
         
-        # START batch pipeline on non-existent - should fail with 404
+        profile_created = False
+        
         try:
-            self.client.start_batch_pipeline(
-                non_existent,
-                expected_result="Should fail with 404 Not Found"
+            # Step 1: CREATE compute profile
+            self.client.create_compute_profile(
+                self.test_profile_name, 
+                profile_config,
+                expected_result="Should succeed with 200 OK for valid profile config"
             )
-            print(f"✓ START_BATCH_PIPELINE_{non_existent} passed (failed as expected)")
-        except Exception:
-            print(f"✓ START_BATCH_PIPELINE_{non_existent} passed (failed as expected)")
-        
-        # STOP batch pipeline on non-existent - should fail with 404
-        try:
-            self.client.stop_batch_pipeline(
-                non_existent,
-                expected_result="Should fail with 404 Not Found"
-            )
-            print(f"✓ STOP_BATCH_PIPELINE_{non_existent} passed (failed as expected)")
-        except Exception:
-            print(f"✓ STOP_BATCH_PIPELINE_{non_existent} passed (failed as expected)")
-        
-        # GET pipeline runs on non-existent - should fail with 404
-        try:
-            runs = self.client.get_pipeline_runs(
-                non_existent, 
-                "batch",
-                expected_result="Should fail with 404 Not Found"
-            )
-            print(f"✓ GET_PIPELINE_RUNS_{non_existent}_BATCH passed (failed as expected)")
-        except Exception:
-            print(f"✓ GET_PIPELINE_RUNS_{non_existent}_BATCH passed (failed as expected)")
+            print(f"✓ Step 1: CREATE_COMPUTE_PROFILE_{self.test_profile_name} passed")
+            profile_created = True
+            
+            # Step 2: GET compute profile
+            try:
+                profile = self.client.get_compute_profile(
+                    self.test_profile_name,
+                    expected_result="Should succeed with 200 OK for existing profile"
+                )
+                print(f"✓ Step 2: GET_COMPUTE_PROFILE_{self.test_profile_name} passed")
+            except Exception as e:
+                print(f"✗ Step 2: GET_COMPUTE_PROFILE_{self.test_profile_name} failed: {e}")
+            
+            # Step 3: LIST compute profiles
+            try:
+                profiles = self.client.list_compute_profiles()
+                if profiles and any(p.get('name') == self.test_profile_name for p in profiles):
+                    print(f"✓ Step 3: LIST_COMPUTE_PROFILES verified {self.test_profile_name} exists")
+                else:
+                    print(f"✗ Step 3: LIST_COMPUTE_PROFILES did not find {self.test_profile_name}")
+            except Exception as e:
+                print(f"✗ Step 3: LIST_COMPUTE_PROFILES failed: {e}")
+            
+            # Step 4: DISABLE compute profile
+            try:
+                self.client.disable_compute_profile(
+                    self.test_profile_name,
+                    expected_result="Should succeed with 200 OK"
+                )
+                print(f"✓ Step 4: DISABLE_COMPUTE_PROFILE_{self.test_profile_name} passed")
+            except Exception as e:
+                print(f"✗ Step 4: DISABLE_COMPUTE_PROFILE_{self.test_profile_name} failed: {e}")
+            
+            # Step 5: DELETE compute profile
+            if not self.skip_cleanup:
+                try:
+                    self.client.delete_compute_profile(
+                        self.test_profile_name,
+                        expected_result="Should succeed with 200 OK"
+                    )
+                    print(f"✓ Step 5: DELETE_COMPUTE_PROFILE_{self.test_profile_name} passed")
+                except Exception as e:
+                    print(f"✗ Step 5: DELETE_COMPUTE_PROFILE_{self.test_profile_name} failed: {e}")
+            else:
+                print(f"ℹ Step 5: DELETE_COMPUTE_PROFILE_{self.test_profile_name} skipped (--skip-cleanup)")
+                
+        except Exception as e:
+            print(f"✗ Compute profile workflow failed at creation: {e}")
+            # Cleanup if profile was created
+            if profile_created and not self.skip_cleanup:
+                try:
+                    self.client.delete_compute_profile(self.test_profile_name)
+                    print(f"✓ Cleanup: Deleted compute profile {self.test_profile_name}")
+                except:
+                    pass
     
-    def _test_existing_pipeline_operations(self):
-        """Test operations on existing pipelines"""
-        print("\n=== Testing Existing Pipeline Operations ===")
+    def _test_complete_security_key_workflow(self):
+        """Test complete security key workflow: CREATE -> GET -> DELETE"""
+        print("\n=== Testing Complete Security Key Workflow ===")
         
-        # Get list of existing pipelines
+        key_data = {
+            "description": "Test secure key for workflow validation",
+            "data": "test-secret-value-12345",
+            "properties": {
+                "type": "password",
+                "purpose": "api-testing"
+            }
+        }
+        
+        key_created = False
+        
+        try:
+            # Step 1: CREATE secure key
+            self.client.create_secure_key(
+                self.test_key_name, 
+                key_data,
+                expected_result="Should succeed with 200 OK for valid key data"
+            )
+            print(f"✓ Step 1: CREATE_SECURE_KEY_{self.test_key_name} passed")
+            key_created = True
+            
+            # Step 2: GET secure key metadata
+            try:
+                metadata = self.client.get_secure_key_metadata(
+                    self.test_key_name,
+                    expected_result="Should succeed with 200 OK for existing key"
+                )
+                print(f"✓ Step 2: GET_SECURE_KEY_METADATA_{self.test_key_name} passed")
+            except Exception as e:
+                print(f"✗ Step 2: GET_SECURE_KEY_METADATA_{self.test_key_name} failed: {e}")
+            
+            # Step 3: LIST secure keys
+            try:
+                keys = self.client.list_secure_keys()
+                if keys and any(k.get('name') == self.test_key_name for k in keys):
+                    print(f"✓ Step 3: LIST_SECURE_KEYS verified {self.test_key_name} exists")
+                else:
+                    print(f"✗ Step 3: LIST_SECURE_KEYS did not find {self.test_key_name}")
+            except Exception as e:
+                print(f"✗ Step 3: LIST_SECURE_KEYS failed: {e}")
+            
+            # Step 4: DELETE secure key
+            if not self.skip_cleanup:
+                try:
+                    self.client.delete_secure_key(
+                        self.test_key_name,
+                        expected_result="Should succeed with 200 OK"
+                    )
+                    print(f"✓ Step 4: DELETE_SECURE_KEY_{self.test_key_name} passed")
+                except Exception as e:
+                    print(f"✗ Step 4: DELETE_SECURE_KEY_{self.test_key_name} failed: {e}")
+            else:
+                print(f"ℹ Step 4: DELETE_SECURE_KEY_{self.test_key_name} skipped (--skip-cleanup)")
+                
+        except Exception as e:
+            print(f"✗ Security key workflow failed at creation: {e}")
+            # Cleanup if key was created
+            if key_created and not self.skip_cleanup:
+                try:
+                    self.client.delete_secure_key(self.test_key_name)
+                    print(f"✓ Cleanup: Deleted secure key {self.test_key_name}")
+                except:
+                    pass
+    
+    def _test_existing_resources(self):
+        """Test operations on existing resources"""
+        print("\n=== Testing Operations on Existing Resources ===")
+        
+        # Test with existing pipelines
         try:
             pipelines = self.client.list_pipelines()
             if pipelines and len(pipelines) > 0:
-                # Test with first existing pipeline
                 existing_pipeline = pipelines[0]['name']
                 
-                # GET existing pipeline - should succeed
+                # GET existing pipeline
                 try:
                     self.client.get_pipeline(
                         existing_pipeline,
                         expected_result="Should succeed with 200 OK for existing pipeline"
                     )
-                    print(f"✓ GET_PIPELINE_{existing_pipeline} passed (existing pipeline)")
+                    print(f"✓ GET_PIPELINE_{existing_pipeline} passed (existing resource)")
                 except Exception as e:
                     print(f"✗ GET_PIPELINE_{existing_pipeline} failed: {e}")
                 
-                # GET runs for existing pipeline - should succeed
+                # GET runs for existing pipeline
                 try:
                     self.client.get_pipeline_runs(
                         existing_pipeline,
                         "batch",
-                        expected_result="Should succeed with 200 OK for existing pipeline"
+                        expected_result="Should succeed with 200 OK"
                     )
                     print(f"✓ GET_PIPELINE_RUNS_{existing_pipeline}_BATCH passed")
                 except Exception as e:
@@ -745,20 +978,55 @@ class PipelineTestRunner:
                 print("ℹ No existing pipelines found to test")
         except Exception as e:
             print(f"ℹ Could not test existing pipelines: {e}")
-    
-    def _test_compute_profile_operations(self):
-        """Test compute profile operations"""
-        print("\n=== Testing Compute Profile Operations ===")
         
-        # LIST compute profiles - should succeed
+        # Test with existing compute profiles
         try:
             profiles = self.client.list_compute_profiles()
-            print(f"✓ LIST_COMPUTE_PROFILES passed - found {len(profiles) if profiles else 0} profile(s)")
+            if profiles and len(profiles) > 0:
+                existing_profile = profiles[0]['name']
+                
+                try:
+                    self.client.get_compute_profile(
+                        existing_profile,
+                        expected_result="Should succeed with 200 OK for existing profile"
+                    )
+                    print(f"✓ GET_COMPUTE_PROFILE_{existing_profile} passed (existing resource)")
+                except Exception as e:
+                    print(f"✗ GET_COMPUTE_PROFILE_{existing_profile} failed: {e}")
+            else:
+                print("ℹ No existing compute profiles found to test")
         except Exception as e:
-            print(f"✗ LIST_COMPUTE_PROFILES failed: {e}")
+            print(f"ℹ Could not test existing compute profiles: {e}")
+    
+    def _test_expected_failures(self):
+        """Test operations that should fail"""
+        print("\n=== Testing Expected Failures ===")
         
-        # Test with non-existent profile first
+        non_existent_pipeline = "non-existent-pipeline-12345"
         non_existent_profile = "non-existent-profile-12345"
+        non_existent_key = "non-existent-key-12345"
+        
+        # GET non-existent pipeline
+        try:
+            self.client.get_pipeline(
+                non_existent_pipeline,
+                expected_result="Should fail with 404 Not Found"
+            )
+            print(f"✓ GET_PIPELINE_{non_existent_pipeline} passed (failed as expected)")
+        except Exception:
+            print(f"✓ GET_PIPELINE_{non_existent_pipeline} passed (failed as expected)")
+        
+        # START non-existent pipeline
+        try:
+            self.client.start_batch_pipeline(
+                non_existent_pipeline,
+                expected_result="Should fail with 404 Not Found"
+            )
+            print(f"✓ START_BATCH_PIPELINE_{non_existent_pipeline} passed (failed as expected)")
+        except Exception:
+            print(f"✓ START_BATCH_PIPELINE_{non_existent_pipeline} passed (failed as expected)")
+        
+        # GET non-existent compute profile
         try:
             self.client.get_compute_profile(
                 non_existent_profile,
@@ -768,81 +1036,7 @@ class PipelineTestRunner:
         except Exception:
             print(f"✓ GET_COMPUTE_PROFILE_{non_existent_profile} passed (failed as expected)")
         
-        # CREATE compute profile - should succeed
-        profile_config = {
-            "label": "Test Compute Profile",
-            "description": "Test profile for API validation",
-            "provisioner": {
-                "name": "gcp-dataproc",
-                "properties": [
-                    {"name": "projectId", "value": self.client.config.project_id},
-                    {"name": "region", "value": self.client.config.location},
-                    {"name": "masterInstanceType", "value": "n1-standard-2"},
-                    {"name": "workerInstanceType", "value": "n1-standard-2"},
-                    {"name": "numWorkers", "value": "2"}
-                ]
-            }
-        }
-        
-        try:
-            self.client.create_compute_profile(
-                self.test_profile_name, 
-                profile_config,
-                expected_result="Should succeed with 200 OK for valid profile config"
-            )
-            print(f"✓ CREATE_COMPUTE_PROFILE_{self.test_profile_name} passed")
-            
-            # GET compute profile - should succeed
-            try:
-                profile = self.client.get_compute_profile(
-                    self.test_profile_name,
-                    expected_result="Should succeed with 200 OK for existing profile"
-                )
-                print(f"✓ GET_COMPUTE_PROFILE_{self.test_profile_name} passed")
-            except Exception as e:
-                print(f"✗ GET_COMPUTE_PROFILE_{self.test_profile_name} failed: {e}")
-            
-            # UPDATE compute profile - should succeed
-            try:
-                profile_config["description"] = "Updated test profile"
-                self.client.update_compute_profile(
-                    self.test_profile_name, 
-                    profile_config,
-                    expected_result="Should succeed with 200 OK for valid update"
-                )
-                print(f"✓ UPDATE_COMPUTE_PROFILE_{self.test_profile_name} passed")
-            except Exception as e:
-                print(f"✗ UPDATE_COMPUTE_PROFILE_{self.test_profile_name} failed: {e}")
-            
-            # DELETE compute profile - should succeed (unless skip_cleanup)
-            if not self.skip_cleanup:
-                try:
-                    self.client.delete_compute_profile(
-                        self.test_profile_name,
-                        expected_result="Should succeed with 200 OK for existing profile"
-                    )
-                    print(f"✓ DELETE_COMPUTE_PROFILE_{self.test_profile_name} passed")
-                except Exception as e:
-                    print(f"✗ DELETE_COMPUTE_PROFILE_{self.test_profile_name} failed: {e}")
-            else:
-                print(f"ℹ DELETE_COMPUTE_PROFILE_{self.test_profile_name} skipped (--skip-cleanup)")
-                
-        except Exception as e:
-            print(f"✗ CREATE_COMPUTE_PROFILE_{self.test_profile_name} failed: {e}")
-    
-    def _test_security_operations(self):
-        """Test security operations"""
-        print("\n=== Testing Security Operations ===")
-        
-        # LIST secure keys - should succeed
-        try:
-            keys = self.client.list_secure_keys()
-            print(f"✓ LIST_SECURE_KEYS passed - found {len(keys) if keys else 0} key(s)")
-        except Exception as e:
-            print(f"✗ LIST_SECURE_KEYS failed: {e}")
-        
-        # Test with non-existent key first
-        non_existent_key = "non-existent-key-12345"
+        # GET non-existent secure key metadata
         try:
             self.client.get_secure_key_metadata(
                 non_existent_key,
@@ -851,49 +1045,6 @@ class PipelineTestRunner:
             print(f"✓ GET_SECURE_KEY_METADATA_{non_existent_key} passed (failed as expected)")
         except Exception:
             print(f"✓ GET_SECURE_KEY_METADATA_{non_existent_key} passed (failed as expected)")
-        
-        # CREATE secure key - should succeed
-        key_data = {
-            "description": "Test secure key for API validation",
-            "data": "test-secret-value",
-            "properties": {
-                "test-property": "test-value"
-            }
-        }
-        
-        try:
-            self.client.create_secure_key(
-                self.test_key_name, 
-                key_data,
-                expected_result="Should succeed with 200 OK for valid key data"
-            )
-            print(f"✓ CREATE_SECURE_KEY_{self.test_key_name} passed")
-            
-            # GET secure key metadata - should succeed
-            try:
-                metadata = self.client.get_secure_key_metadata(
-                    self.test_key_name,
-                    expected_result="Should succeed with 200 OK for existing key"
-                )
-                print(f"✓ GET_SECURE_KEY_METADATA_{self.test_key_name} passed")
-            except Exception as e:
-                print(f"✗ GET_SECURE_KEY_METADATA_{self.test_key_name} failed: {e}")
-            
-            # DELETE secure key - should succeed (unless skip_cleanup)
-            if not self.skip_cleanup:
-                try:
-                    self.client.delete_secure_key(
-                        self.test_key_name,
-                        expected_result="Should succeed with 200 OK for existing key"
-                    )
-                    print(f"✓ DELETE_SECURE_KEY_{self.test_key_name} passed")
-                except Exception as e:
-                    print(f"✗ DELETE_SECURE_KEY_{self.test_key_name} failed: {e}")
-            else:
-                print(f"ℹ DELETE_SECURE_KEY_{self.test_key_name} skipped (--skip-cleanup)")
-                
-        except Exception as e:
-            print(f"✗ CREATE_SECURE_KEY_{self.test_key_name} failed: {e}")
 
 
 class ReportGenerator:
@@ -910,7 +1061,8 @@ class ReportGenerator:
             fieldnames = [
                 'test_case', 'api_endpoint', 'method', 'description', 'type', 'status',
                 'response_code', 'response_message', 'execution_time', 'timestamp',
-                'expected_result', 'actual_result', 'test_passed', 'error_details'
+                'expected_result', 'actual_result', 'test_passed', 'resource_created',
+                'resource_deleted', 'error_details'
             ]
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             
@@ -930,19 +1082,21 @@ class ReportGenerator:
                     'expected_result': result.expected_result,
                     'actual_result': result.actual_result,
                     'test_passed': result.test_passed,
+                    'resource_created': result.resource_created,
+                    'resource_deleted': result.resource_deleted,
                     'error_details': result.error_details[:200] + '...' if len(result.error_details) > 200 else result.error_details
                 })
         
         return filename
     
     @staticmethod
-    def display_results_table(test_results: List[TestResult]):
+    def display_results_table(test_results: List[TestResult], resource_tracker: ResourceTracker):
         """Display results in tabulated format"""
         if not test_results:
             print("No test results to display.")
             return
         
-        # Remove any duplicates based on test_case + method + endpoint
+        # Remove any duplicates
         unique_results = []
         seen = set()
         for result in test_results:
@@ -1004,6 +1158,38 @@ class ReportGenerator:
         print(f"\n📋 OPERATION BREAKDOWN:")
         for op, count in sorted(operations.items()):
             print(f"   {op}: {count}")
+        
+        # Resource tracking summary
+        print(f"\n🔧 RESOURCE TRACKING:")
+        created_resources = [r for r in unique_results if r.resource_created]
+        deleted_resources = [r for r in unique_results if r.resource_deleted]
+        
+        print(f"   Resources Created:")
+        if created_resources:
+            for r in created_resources:
+                print(f"     - {r.resource_created}")
+        else:
+            print(f"     None")
+            
+        print(f"   Resources Deleted:")
+        if deleted_resources:
+            for r in deleted_resources:
+                resource_info = r.test_case.replace("DELETE_", "").replace("_", " ")
+                print(f"     - {resource_info}")
+        else:
+            print(f"     None")
+        
+        # Check for undeleted resources
+        undeleted = resource_tracker.get_undeleted_resources()
+        if undeleted:
+            print(f"\n⚠️  UNDELETED TEST RESOURCES:")
+            for resource_type, resources in undeleted.items():
+                print(f"   {resource_type.title()}:")
+                for resource in resources:
+                    print(f"     - {resource}")
+            print("\n   Please clean up these resources manually!")
+        else:
+            print(f"\n✅ All test resources cleaned up successfully!")
         
         # Test validation summary
         print(f"\n✅ TEST VALIDATION SUMMARY:")
@@ -1085,15 +1271,14 @@ Examples:
         print(f"\n📄 CSV report generated: {csv_filename}")
         
         # Display results
-        ReportGenerator.display_results_table(test_results)
+        ReportGenerator.display_results_table(test_results, config.resource_tracker)
         
         print(f"\n✅ Pipeline-level testing completed successfully!")
         
         if args.skip_cleanup:
-            print(f"\n⚠️  Test resources were not cleaned up:")
-            print(f"   - Pipeline: {runner.test_pipeline_name}")
-            print(f"   - Compute Profile: {runner.test_profile_name}")
-            print(f"   - Secure Key: {runner.test_key_name}")
+            undeleted = config.resource_tracker.get_undeleted_resources()
+            if undeleted:
+                print(f"\n⚠️  Test resources were not cleaned up (--skip-cleanup flag used)")
         
     except Exception as e:
         print(f"\n❌ Error during testing: {e}")
