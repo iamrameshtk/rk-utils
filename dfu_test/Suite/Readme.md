@@ -6,8 +6,8 @@ A comprehensive Python-based testing framework for Google Cloud Data Fusion APIs
 
 This testing suite provides two specialized scripts for comprehensive Data Fusion API validation:
 
-1. **Main Operations Script** (`data_fusion_main.py`) - Core instance and pipeline operations
-2. **Namespace & System Admin Script** (`data_fusion_namespace_system.py`) - Administrative operations with detailed service monitoring
+1. **Main Operations Script** (`gcp_data_fusion_cp_and_dp.py`) - Core instance and pipeline operations
+2. **Namespace & System Admin Script** (`gcp_data_fusion_namespace_system.py`) - Administrative operations with detailed service monitoring
 
 Both scripts feature complete test automation, CSV reporting, tabulated output with operation type categorization, and **duplicate entry prevention** for clean reports.
 
@@ -29,8 +29,8 @@ Both scripts feature complete test automation, CSV reporting, tabulated output w
 
 ```
 data-fusion-testing-suite/
-├── data_fusion_main.py                    # Main operations script
-├── data_fusion_namespace_system.py        # Namespace & system admin script (enhanced)
+├── gcp_data_fusion_cp_and_dp.py         # Main operations script
+├── gcp_data_fusion_namespace_system.py  # Namespace & system admin script (enhanced)
 ├── README.md                             # This documentation
 ├── requirements.txt                      # Python dependencies
 └── reports/                              # Generated test reports
@@ -77,7 +77,7 @@ export GOOGLE_AUTH_TOKEN=$(gcloud auth print-access-token)
 
 ## 📊 Operation Types & Test Coverage
 
-### Script 1: Main Operations (`data_fusion_main.py`)
+### Script 1: Main Operations (`gcp_data_fusion_cp_and_dp.py`)
 | Type | Description | Test Count | Key Operations |
 |------|-------------|------------|----------------|
 | **Instance Level Operation** | Instance lifecycle management | 6 tests | CREATE, GET, UPDATE, DELETE, LIST, RESTART |
@@ -88,7 +88,7 @@ export GOOGLE_AUTH_TOKEN=$(gcloud auth print-access-token)
 
 **Total: 25 Test Cases** (No duplicates)
 
-### Script 2: Namespace & System Admin (`data_fusion_namespace_system.py`) - **Enhanced**
+### Script 2: Namespace & System Admin (`gcp_data_fusion_namespace_system.py`) - **Enhanced**
 | Type | Description | Test Count | Key Operations | Service Status |
 |------|-------------|------------|----------------|----------------|
 | **Instance Level Operation** | Basic instance information | 2 tests | GET, LIST instances | N/A |
@@ -180,7 +180,7 @@ LOCATION = "us-central1"          # Replace with your preferred location
 export GOOGLE_AUTH_TOKEN=$(gcloud auth print-access-token)
 
 # Run main operations tests
-python data_fusion_main.py
+python gcp_data_fusion_cp_and_dp.py
 ```
 
 ### Running the Enhanced Namespace & System Admin Script
@@ -190,7 +190,7 @@ python data_fusion_main.py
 export GOOGLE_AUTH_TOKEN=$(gcloud auth print-access-token)
 
 # Run namespace and system admin tests with service monitoring
-python data_fusion_namespace_system.py
+python gcp_data_fusion_namespace_system.py
 ```
 
 ## 📈 Example Outputs
